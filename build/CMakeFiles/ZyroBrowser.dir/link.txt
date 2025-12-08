@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/ZyroBrowser.dir/link.d CMakeFiles/ZyroBrowser.dir/main.cpp.o -o ZyroBrowser   -L/home/sadeq/Projects/ZyroBrowser/Zyro-Browser/ultralight-sdk/bin  -Wl,-rpath,/home/sadeq/Projects/ZyroBrowser/Zyro-Browser/ultralight-sdk/bin -lUltralight -lUltralightCore -lWebCore -lAppCore

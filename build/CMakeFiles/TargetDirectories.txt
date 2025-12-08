@@ -1,0 +1,3 @@
+/home/sadeq/Projects/ZyroBrowser/Zyro-Browser/build/CMakeFiles/ZyroBrowser.dir
+/home/sadeq/Projects/ZyroBrowser/Zyro-Browser/build/CMakeFiles/edit_cache.dir
+/home/sadeq/Projects/ZyroBrowser/Zyro-Browser/build/CMakeFiles/rebuild_cache.dir
