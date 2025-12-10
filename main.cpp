@@ -18,16 +18,23 @@ class ZyroBrowser : public AppListener,
 
 public:
     ZyroBrowser() {
+        // Inside your ZyroBrowser() constructor in main.cpp
+
         std::cout << "[1] Initializing Settings..." << std::endl;
         Config config;
         Settings settings;
         
-        // Use the GPU renderer by default, but we might need to disable it if this crashes
-        //config.use_gpu_driver = false; 
+        // FIX 1: The variable name changed in SDK 1.4
+        // Instead of 'use_gpu_driver = false', we set 'force_cpu_renderer = true'
+        settings.force_cpu_renderer = true;
+
+        // FIX 2: Since you moved files to the build root, tell the app to look in "."
+        // (This replaces the old 'resource_path_prefix' setting)
+        settings.file_system_path = ".";
 
         std::cout << "[2] Creating App..." << std::endl;
         app_ = App::Create(settings, config);
-        
+            
         if (!app_) {
             std::cerr << "[CRITICAL] App::Create returned null! Check your GPU drivers or assets." << std::endl;
             exit(-1);
