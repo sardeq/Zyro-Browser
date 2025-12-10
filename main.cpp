@@ -31,7 +31,7 @@ public:
         
         // --- FIX 2: GOOGLE COMPATIBILITY ---
         // Pretend to be a standard Chrome browser on Linux
-        //config.user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36";
+        //settings.user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36";
 
         //settings.force_cpu_renderer = true;
         settings.force_cpu_renderer = false;
@@ -43,6 +43,9 @@ public:
 
         web_layer_ = Overlay::Create(window_, 1024, 768 - UI_HEIGHT, 0, UI_HEIGHT);
         ui_layer_ = Overlay::Create(window_, 1024, UI_HEIGHT, 0, 0);
+
+        String ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36";
+        //web_layer_->view()->SetUserAgent(ua);
         
         ui_layer_->view()->LoadURL("file:///assets/app.html");
         web_layer_->view()->LoadURL("https://www.google.com"); 
@@ -105,7 +108,14 @@ public:
     virtual void OnUpdate() override {}
     virtual void OnClose(ultralight::Window* window) override { app_->Quit(); }
     virtual void OnFinishLoading(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {}
-    virtual void OnDOMReady(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {}
+
+    virtual void OnDOMReady(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {
+        // Only run this on the Google layer
+        if (caller == web_layer_->view() && is_main_frame) {
+            // Force Google to think we are Chrome via JavaScript
+            caller->EvaluateScript("Object.defineProperty(navigator, 'userAgent', { get: function () { return 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36'; } });");
+        }
+    }
 };
 
 int main() {
