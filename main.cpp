@@ -1,79 +1,114 @@
 #include <iostream>
-#include <filesystem>
 #include <string>
 #include <AppCore/AppCore.h>
 #include <AppCore/Window.h>
 #include <AppCore/Overlay.h>
-#include <AppCore/JSHelpers.h>
 #include <Ultralight/platform/Config.h>
 
 using namespace ultralight;
 
+const int UI_HEIGHT = 70; 
+
+// ADDED: Inherit from ViewListener to handle popups/cursors
 class ZyroBrowser : public AppListener,
-                   public WindowListener,
-                   public LoadListener {
+                    public WindowListener,
+                    public LoadListener,
+                    public ViewListener { 
     RefPtr<App> app_;
     RefPtr<Window> window_;
-    RefPtr<Overlay> overlay_;
+    
+    RefPtr<Overlay> ui_layer_;
+    RefPtr<Overlay> web_layer_;
 
 public:
     ZyroBrowser() {
-        // Inside your ZyroBrowser() constructor in main.cpp
-
-        std::cout << "[1] Initializing Settings..." << std::endl;
         Config config;
         Settings settings;
         
-        // FIX 1: The variable name changed in SDK 1.4
-        // Instead of 'use_gpu_driver = false', we set 'force_cpu_renderer = true'
-        settings.force_cpu_renderer = true;
+        // --- FIX 1: MEMORY & PERSISTENCE ---
+        // Save cookies/cache to disk so logins are remembered
+        config.cache_path = "cache/"; 
+        
+        // --- FIX 2: GOOGLE COMPATIBILITY ---
+        // Pretend to be a standard Chrome browser on Linux
+        //config.user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36";
 
-        // FIX 2: Since you moved files to the build root, tell the app to look in "."
-        // (This replaces the old 'resource_path_prefix' setting)
+        //settings.force_cpu_renderer = true;
+        settings.force_cpu_renderer = false;
         settings.file_system_path = ".";
 
-        std::cout << "[2] Creating App..." << std::endl;
         app_ = App::Create(settings, config);
-            
-        if (!app_) {
-            std::cerr << "[CRITICAL] App::Create returned null! Check your GPU drivers or assets." << std::endl;
-            exit(-1);
-        }
-
-        std::cout << "[3] Creating Window..." << std::endl;
-        window_ = Window::Create(app_->main_monitor(), 800, 600, false, kWindowFlags_Titled);
+        window_ = Window::Create(app_->main_monitor(), 1024, 768, false, kWindowFlags_Titled | kWindowFlags_Resizable);
         window_->SetTitle("Zyro Browser");
+
+        web_layer_ = Overlay::Create(window_, 1024, 768 - UI_HEIGHT, 0, UI_HEIGHT);
+        ui_layer_ = Overlay::Create(window_, 1024, UI_HEIGHT, 0, 0);
         
-        std::cout << "[4] Creating Overlay..." << std::endl;
-        overlay_ = Overlay::Create(window_, 800, 600, 0, 0);
-        
-        std::cout << "[5] Setting Listeners..." << std::endl;
+        ui_layer_->view()->LoadURL("file:///assets/app.html");
+        web_layer_->view()->LoadURL("https://www.google.com"); 
+
+        // Listeners
         app_->set_listener(this);
         window_->set_listener(this);
-        overlay_->view()->set_load_listener(this);
+        ui_layer_->view()->set_load_listener(this);
         
-        std::cout << "[6] Loading URL..." << std::endl;
-        overlay_->view()->LoadURL("https://google.com");
-        
-        std::cout << "[7] Initialization Complete!" << std::endl;
+        // --- FIX 3: ATTACH VIEW LISTENER ---
+        // This lets us handle popups and cursors
+        web_layer_->view()->set_view_listener(this);
+        web_layer_->view()->set_load_listener(this); // Optional: to track URL changes
     }
 
-    void Run() { 
-        std::cout << "[8] Entering Run Loop..." << std::endl;
-        app_->Run(); 
+    void Run() { app_->Run(); }
+
+    virtual void OnResize(ultralight::Window* window, uint32_t width, uint32_t height) override {
+        if (ui_layer_) ui_layer_->Resize(width, UI_HEIGHT);
+        if (web_layer_) web_layer_->Resize(width, height - UI_HEIGHT);
     }
 
+    // --- POPUP HANDLER (Prevents Freezing) ---
+    virtual RefPtr<View> OnCreateChildView(ultralight::View* caller, const String& opener_url, const String& target_url, bool is_popup, const IntRect& popup_rect) override {
+        // If Google tries to open a popup, we force it to open in the CURRENT window instead.
+        // This isn't perfect (you lose the old page), but it prevents the freeze.
+        if (web_layer_) {
+            web_layer_->view()->LoadURL(target_url);
+        }
+        return nullptr; // Return null because we handled it manually
+    }
+
+    // --- CURSOR HANDLER (Quality of Life) ---
+    virtual void OnChangeCursor(ultralight::View* caller, Cursor cursor) override {
+        if (window_) window_->SetCursor(cursor);
+    }
+
+    virtual void OnBeginLoading(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {
+        std::string urlStr = url.utf8().data();
+
+        if (caller == ui_layer_->view()) {
+            if (urlStr.find("zyro://navigate/") == 0) {
+                std::string targetUrl = urlStr.substr(16);
+                if (web_layer_) web_layer_->view()->LoadURL(targetUrl.c_str());
+                ui_layer_->view()->Stop();
+            }
+            if (urlStr.find("zyro://action/") == 0) {
+                std::string action = urlStr.substr(14);
+                if (web_layer_) {
+                    if (action == "back") web_layer_->view()->GoBack();
+                    if (action == "forward") web_layer_->view()->GoForward();
+                    if (action == "refresh") web_layer_->view()->Reload();
+                }
+                ui_layer_->view()->Stop();
+            }
+        }
+    }
+
+    // Unused
     virtual void OnUpdate() override {}
     virtual void OnClose(ultralight::Window* window) override { app_->Quit(); }
-    virtual void OnResize(ultralight::Window* window, uint32_t width, uint32_t height) override {
-        if (overlay_) overlay_->Resize(width, height);
-    }
     virtual void OnFinishLoading(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {}
     virtual void OnDOMReady(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {}
 };
 
 int main() {
-    std::cout << "--- STARTING ZYRO BROWSER ---" << std::endl;
     ZyroBrowser browser;
     browser.Run();
     return 0;

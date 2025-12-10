@@ -30,3 +30,5 @@ add_custom_command(TARGET ZyroBrowser POST_BUILD
     ${ULTRALIGHT_SDK_ROOT}/resources
     $<TARGET_FILE_DIR:ZyroBrowser>/resources
 )
+
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
