@@ -1,0 +1,50 @@
+/* Main Window Background */
+window {
+    background-color: #202124;
+}
+
+/* The Toolbar Container */
+box.toolbar {
+    background-color: #292a2d;
+    border-bottom: 1px solid #1a1b1e;
+    padding: 8px 12px;
+}
+
+/* The URL Bar (Entry) */
+entry {
+    background-color: #35363a;
+    color: #e8eaed;
+    border: 1px solid transparent;
+    border-radius: 18px;
+    padding: 0 12px;
+    min-height: 34px;
+    font-family: 'Segoe UI', sans-serif;
+    caret-color: #8ab4f8;
+}
+
+entry:focus {
+    background-color: #202124;
+    border: 1px solid #8ab4f8;
+    box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2);
+}
+
+/* Buttons (Back, Forward, Refresh) */
+button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #e8eaed;
+    border-radius: 50%;
+    min-width: 32px;
+    min-height: 32px;
+    margin: 0 2px;
+    padding: 0;
+}
+
+button:hover {
+    background-color: #3c4043;
+}
+
+button:active {
+    background-color: #4d5156;
+}

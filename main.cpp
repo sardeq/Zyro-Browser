@@ -1,158 +1,125 @@
-#include <iostream>
+#include <gtk/gtk.h>
+#include <webkit2/webkit2.h>
 #include <string>
-#include <filesystem> 
-#include <AppCore/AppCore.h>
-#include <AppCore/Window.h>
-#include <AppCore/Overlay.h>
-#include <Ultralight/platform/Config.h>
 
-using namespace ultralight;
-namespace fs = std::filesystem;
+// Global pointers for ease of access in this simple example
+WebKitWebView* web_view;
+GtkEntry* url_bar;
 
-const int UI_HEIGHT = 44; 
-
-class ZyroBrowser : public AppListener,
-                    public WindowListener,
-                    public LoadListener,
-                    public ViewListener { 
-    RefPtr<App> app_;
-    RefPtr<Window> window_;
-    RefPtr<Overlay> ui_layer_;
-    RefPtr<Overlay> web_layer_;
-
-    double current_zoom_ = 1.0;
-
-public:
-    ZyroBrowser() {
-        // --- STEP 1: CALCULATE ABSOLUTE PATHS ---
-        fs::path basePath = fs::current_path();
-        fs::path cacheDir = basePath / "cache";
-        
-        // Ensure cache exists
-        if (!fs::exists(cacheDir)) fs::create_directories(cacheDir);
-
-        std::cout << "--- PATH INFO ---" << std::endl;
-        std::cout << "Cache Path: " << cacheDir << std::endl;
-
-        Config config;
-        Settings settings;
-        
-        // --- STEP 2: STORAGE CONFIG ---
-        // We use the absolute path. On Linux, this is often required for SQLite to lock the database file.
-        config.cache_path = cacheDir.string().c_str();
-
-        // 3. File system path
-        settings.file_system_path = ".";
-
-        // Performance
-        settings.force_cpu_renderer = false; 
-
-        app_ = App::Create(settings, config);
-        window_ = Window::Create(app_->main_monitor(), 1100, 800, false, kWindowFlags_Titled | kWindowFlags_Resizable);
-        window_->SetTitle("Zyro Browser");
-
-        web_layer_ = Overlay::Create(window_, 1100, 800 - UI_HEIGHT, 0, UI_HEIGHT);
-        ui_layer_ = Overlay::Create(window_, 1100, UI_HEIGHT, 0, 0);
-
-        ui_layer_->view()->LoadURL("file:///assets/app.html");
-        
-        // Load Google Login directly to test
-        web_layer_->view()->LoadURL("https://accounts.google.com"); 
-
-        app_->set_listener(this);
-        window_->set_listener(this);
-        ui_layer_->view()->set_load_listener(this);
-        ui_layer_->view()->set_view_listener(this);
-        web_layer_->view()->set_view_listener(this); 
-        web_layer_->view()->set_load_listener(this);
-    }
-
-    void Run() { app_->Run(); }
-
-    virtual void OnResize(ultralight::Window* window, uint32_t width, uint32_t height) override {
-        if (ui_layer_) ui_layer_->Resize(width, UI_HEIGHT);
-        if (web_layer_) web_layer_->Resize(width, height - UI_HEIGHT);
-    }
-
-    virtual RefPtr<View> OnCreateChildView(ultralight::View* caller, const String& opener_url, const String& target_url, bool is_popup, const IntRect& popup_rect) override {
-        if (web_layer_) web_layer_->view()->LoadURL(target_url);
-        return nullptr;
-    }
-
-    virtual void OnChangeCursor(ultralight::View* caller, Cursor cursor) override {
-        if (window_) window_->SetCursor(cursor);
-    }
-
-    virtual void OnBeginLoading(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {
-        std::string urlStr = url.utf8().data();
-        if (caller == ui_layer_->view()) {
-            if (urlStr.find("zyro://navigate/") == 0) {
-                std::string targetUrl = urlStr.substr(16);
-                if (web_layer_) web_layer_->view()->LoadURL(targetUrl.c_str());
-                ui_layer_->view()->Stop(); 
-            }
-            if (urlStr.find("zyro://action/") == 0) {
-                std::string action = urlStr.substr(14);
-                if (web_layer_) {
-                    if (action == "back") web_layer_->view()->GoBack();
-                    if (action == "forward") web_layer_->view()->GoForward();
-                    if (action == "refresh") web_layer_->view()->Reload();
-                    if (action == "zoomIn" || action == "zoomOut" || action == "zoomReset") {
-                        if (action == "zoomIn") current_zoom_ += 0.2;
-                        if (action == "zoomOut") current_zoom_ -= 0.2;
-                        if (action == "zoomReset") current_zoom_ = 1.0;
-                        std::string zoomScript = "document.body.style.zoom = '" + std::to_string(current_zoom_) + "';";
-                        web_layer_->view()->EvaluateScript(zoomScript.c_str());
-                    }
-                }
-                ui_layer_->view()->Stop();
-            }
-        }
-    }
-
-    virtual void OnChangeURL(ultralight::View* caller, const String& url) override {
-        if (caller == web_layer_->view()) {
-            String js = "window.updateAddressBar('" + url + "');";
-            ui_layer_->view()->EvaluateScript(js);
-        }
-    }
-
-    virtual void OnFinishLoading(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {
-        if (caller == web_layer_->view() && is_main_frame) {
-            String js = "window.updateAddressBar('" + url + "');";
-            ui_layer_->view()->EvaluateScript(js);
-        }
-    }
-
-    virtual void OnUpdate() override {}
-    virtual void OnClose(ultralight::Window* window) override { app_->Quit(); }
+// --- Helper: Load CSS Styles ---
+void load_css() {
+    GtkCssProvider* provider = gtk_css_provider_new();
+    GFile* css_file = g_file_new_for_path("assets/style.css");
+    gtk_css_provider_load_from_file(provider, css_file, NULL);
     
-    virtual void OnDOMReady(ultralight::View* caller, uint64_t frame_id, bool is_main_frame, const String& url) override {
-        if (caller == web_layer_->view() && is_main_frame) {
-            
-            // 1. Hide Automation (CRITICAL)
-            caller->EvaluateScript("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});");
+    gtk_style_context_add_provider_for_screen(
+        gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+    );
+    g_object_unref(css_file);
+}
 
-            // 2. Linux Chrome User Agent (Matches your Arch Linux OS)
-            // This is safer than Safari because it matches your system fonts and rendering behavior.
-            caller->EvaluateScript("Object.defineProperty(navigator, 'userAgent', { get: function () { return 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'; } });");
+// --- Helper: Update URL Bar when page changes ---
+void update_url_bar(WebKitWebView* view, GtkEntry* entry) {
+    const char* uri = webkit_web_view_get_uri(view);
+    if (uri) gtk_entry_set_text(entry, uri);
+}
 
-            // 3. Mock Plugins & Languages (Passes Google's 'Bot vs Human' heuristic)
-            // Bots often have empty plugin lists. We inject fake ones.
-            caller->EvaluateScript("Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });");
-            caller->EvaluateScript("Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'ar'] });");
-
-            // 4. Font Fix (Arabic support)
-            String fontFix = "var style = document.createElement('style');"
-                             "style.innerHTML = 'body, p, span, div, input, textarea, h1, h2, h3 { font-family: system-ui, \"Noto Sans\", \"Noto Sans Arabic\", \"Arial\", sans-serif !important; }';"
-                             "document.head.appendChild(style);";
-            caller->EvaluateScript(fontFix);
-        }
+// --- Callback: User pressed ENTER in URL bar ---
+void on_url_activated(GtkEntry* entry, gpointer data) {
+    std::string text = gtk_entry_get_text(entry);
+    
+    // Simple logic: If it has a space or no dot, treat as Google Search
+    if (text.find(" ") != std::string::npos || text.find(".") == std::string::npos) {
+        std::string search_url = "https://www.google.com/search?q=" + text;
+        webkit_web_view_load_uri(web_view, search_url.c_str());
+    } else {
+        // If missing http/https, add it
+        if (text.find("http") != 0) text = "https://" + text;
+        webkit_web_view_load_uri(web_view, text.c_str());
     }
-};
+    
+    // Remove focus from bar so you can scroll the page immediately
+    gtk_widget_grab_focus(GTK_WIDGET(web_view));
+}
 
-int main() {
-    ZyroBrowser browser;
-    browser.Run();
-    return 0;
+static void activate(GtkApplication* app, gpointer user_data) {
+    load_css();
+
+    // 1. Main Window
+    GtkWidget* window = gtk_application_window_new(app);
+    gtk_window_set_default_size(GTK_WINDOW(window), 1200, 800);
+    gtk_window_set_title(GTK_WINDOW(window), "Zyro Browser");
+
+    // 2. Layout Containers
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_widget_set_name(toolbar, "toolbar"); // Matches CSS "box#toolbar" logic
+    gtk_style_context_add_class(gtk_widget_get_style_context(toolbar), "toolbar");
+
+    // 3. WebKit View (The Engine)
+    // Enable Sandbox & Local Storage
+    WebKitWebContext* ctx = webkit_web_context_new_with_website_data_manager(
+        webkit_website_data_manager_new(
+            "base-cache-directory", "cache",
+            "base-data-directory", "data",
+            NULL)
+    );
+    web_view = WEBKIT_WEB_VIEW(webkit_web_view_new_with_context(ctx));
+
+    // 4. Create UI Elements
+    GtkWidget* btn_back = gtk_button_new_from_icon_name("go-previous-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget* btn_fwd = gtk_button_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget* btn_refresh = gtk_button_new_from_icon_name("view-refresh-symbolic", GTK_ICON_SIZE_BUTTON);
+    url_bar = GTK_ENTRY(gtk_entry_new());
+    gtk_entry_set_placeholder_text(url_bar, "Search Google or type a URL");
+
+    // 5. Pack Toolbar
+    gtk_box_pack_start(GTK_BOX(toolbar), btn_back, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), btn_fwd, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), btn_refresh, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), GTK_WIDGET(url_bar), TRUE, TRUE, 5); // URL bar expands
+
+    // 6. Pack Main Layout
+    gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), GTK_WIDGET(web_view), TRUE, TRUE, 0);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
+
+    // 7. Connect Signals (Interactivity)
+    // Connect Back/Forward/Refresh buttons directly to WebKit slots
+    g_signal_connect_swapped(btn_back, "clicked", G_CALLBACK(webkit_web_view_go_back), web_view);
+    g_signal_connect_swapped(btn_fwd, "clicked", G_CALLBACK(webkit_web_view_go_forward), web_view);
+    g_signal_connect_swapped(btn_refresh, "clicked", G_CALLBACK(webkit_web_view_reload), web_view);
+    
+    // Connect URL Bar
+    g_signal_connect(url_bar, "activate", G_CALLBACK(on_url_activated), NULL);
+
+    // Connect Page Load to Update URL Bar
+    g_signal_connect(web_view, "load-changed", G_CALLBACK(+[](WebKitWebView* v, WebKitLoadEvent e, gpointer d){
+        if(e == WEBKIT_LOAD_COMMITTED) update_url_bar(v, url_bar);
+    }), NULL);
+
+    // 8. Launch
+    gtk_widget_show_all(window);
+    
+    // Load Homepage (Your app.html or Google)
+    // To load your local HTML file as the "New Tab" page:
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        std::string home_path = std::string("file://") + cwd + "/assets/app.html";
+        // Uncomment the line below to use your app.html as home
+        // webkit_web_view_load_uri(web_view, home_path.c_str());
+        
+        // For now, let's load Google to test login/speed immediately:
+        webkit_web_view_load_uri(web_view, "https://google.com");
+    }
+}
+
+int main(int argc, char** argv) {
+    GtkApplication* app = gtk_application_new("org.zyro.browser", G_APPLICATION_DEFAULT_FLAGS);
+    g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
+    int status = g_application_run(G_APPLICATION(app), argc, argv);
+    g_object_unref(app);
+    return status;
 }
