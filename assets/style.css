@@ -66,3 +66,14 @@ notebook {
     border: none;
     padding: 0;
 }
+
+/* Darker toolbar for Incognito */
+window.incognito-window box.toolbar {
+    background-color: #000000;
+    border-bottom: 1px solid #333;
+}
+
+window.incognito-window entry {
+    background-color: #222;
+    color: #fff;
+}
