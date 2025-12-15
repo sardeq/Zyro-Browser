@@ -19,7 +19,9 @@ struct AppSettings {
 } settings;
 
 WebKitWebContext* global_context = nullptr; 
-GtkWidget* global_window = nullptr; 
+GtkWidget* global_window = nullptr;
+
+void create_window(WebKitWebContext* ctx);
 
 // --- Path Helpers ---
 std::string get_assets_path() {
@@ -27,22 +29,24 @@ std::string get_assets_path() {
     std::string current(cwd);
     g_free(cwd);
 
-    // 1. Check if "assets" is in the current folder (running from root)
-    if (g_file_test((current + "/assets").c_str(), G_FILE_TEST_IS_DIR)) {
-        return current + "/assets/";
+    // 1. Check current directory (e.g. if running from project root)
+    std::string local_assets = current + "/assets/";
+    if (g_file_test(local_assets.c_str(), G_FILE_TEST_IS_DIR)) {
+        return local_assets;
     }
 
-    // 2. Check if "assets" is in the parent folder (running from build/)
+    // 2. Check parent directory (e.g. if running from build/)
     size_t last_slash = current.find_last_of('/');
     if (last_slash != std::string::npos) {
         std::string parent = current.substr(0, last_slash);
-        if (g_file_test((parent + "/assets").c_str(), G_FILE_TEST_IS_DIR)) {
-            return parent + "/assets/";
+        std::string parent_assets = parent + "/assets/";
+        if (g_file_test(parent_assets.c_str(), G_FILE_TEST_IS_DIR)) {
+            return parent_assets;
         }
     }
 
-    // Fallback: return hardcoded assumption or current
-    return current + "/assets/";
+    // Fallback
+    return local_assets;
 }
 
 std::string get_config_path() {
@@ -52,24 +56,18 @@ std::string get_config_path() {
 
 // --- System Stats Helper ---
 void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
-    // 1. RAM
     struct sysinfo memInfo;
     sysinfo(&memInfo);
-    long long totalPhysMem = memInfo.totalram;
-    totalPhysMem *= memInfo.mem_unit;
-    long long physMemUsed = memInfo.totalram - memInfo.freeram;
-    physMemUsed *= memInfo.mem_unit;
+    long long physMemUsed = (memInfo.totalram - memInfo.freeram) * memInfo.mem_unit;
+    long long totalPhysMem = memInfo.totalram * memInfo.mem_unit;
     
     std::stringstream ss;
     ss.precision(1);
-    ss << std::fixed << (double)physMemUsed / (1024*1024*1024) << " / " 
-       << (double)totalPhysMem / (1024*1024*1024) << " GB";
+    ss << std::fixed << (double)physMemUsed / (1024*1024*1024) << " / " << (double)totalPhysMem / (1024*1024*1024) << " GB";
     ram_usage = ss.str();
 
-    // 2. CPU
     static unsigned long long lastTotalUser, lastTotalUserLow, lastTotalSys, lastTotalIdle;
     unsigned long long totalUser, totalUserLow, totalSys, totalIdle, total;
-    
     std::ifstream file("/proc/stat");
     std::string line;
     std::getline(file, line);
@@ -83,11 +81,7 @@ void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
         total += (totalIdle - lastTotalIdle);
         cpu_usage = (total > 0) ? (int)((percent * 100) / total) : 0;
     }
-
-    lastTotalUser = totalUser;
-    lastTotalUserLow = totalUserLow;
-    lastTotalSys = totalSys;
-    lastTotalIdle = totalIdle;
+    lastTotalUser = totalUser; lastTotalUserLow = totalUserLow; lastTotalSys = totalSys; lastTotalIdle = totalIdle;
 }
 
 // --- Settings Management ---
@@ -101,18 +95,14 @@ void load_settings() {
         if (theme) { settings.theme = theme; g_free(theme); }
     }
     g_key_file_free(key_file);
-    
-    // Use the smart path finder
     std::string base = get_assets_path();
     settings.home_url = "file://" + base + "home.html";
     settings.settings_url = "file://" + base + "settings.html";
-    LOG("Home URL set to: " + settings.home_url);
 }
 
 void save_settings(const std::string& engine, const std::string& theme) {
     settings.search_engine = engine;
     settings.theme = theme;
-    
     GKeyFile* key_file = g_key_file_new();
     g_key_file_set_string(key_file, "General", "search_engine", settings.search_engine.c_str());
     g_key_file_set_string(key_file, "General", "theme", settings.theme.c_str());
@@ -148,15 +138,38 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     } 
     else if (json.find("save_settings") != std::string::npos) {
         std::string engine = "https://www.google.com/search?q=";
-        if (json.find("duckduckgo") != std::string::npos) engine = "https://duckduckgo.com/?q=";
-        if (json.find("bing") != std::string::npos) engine = "https://www.bing.com/search?q=";
-        
-        std::string theme = (json.find("light") != std::string::npos) ? "light" : "dark";
+        std::string theme = "dark";
+        size_t eng_pos = json.find("\"engine\":\"");
+        if (eng_pos != std::string::npos) {
+            size_t start = eng_pos + 10;
+            size_t end = json.find("\"", start);
+            if (end != std::string::npos) engine = json.substr(start, end - start);
+        }
+        size_t theme_pos = json.find("\"theme\":\"");
+        if (theme_pos != std::string::npos) {
+            size_t start = theme_pos + 9;
+            size_t end = json.find("\"", start);
+            if (end != std::string::npos) theme = json.substr(start, end - start);
+        }
         save_settings(engine, theme);
     }
     else if (json.find("get_theme") != std::string::npos) {
         WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
         run_js(view, "setTheme('" + settings.theme + "');");
+    }
+    else if (json.find("get_settings") != std::string::npos) {
+        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+        std::string script = "loadCurrentSettings('" + settings.search_engine + "', '" + settings.theme + "');";
+        run_js(view, script);
+    }
+    else if (json.find("clear_cache") != std::string::npos) {
+        // Clear HTTP cache and Cookies
+        WebKitWebsiteDataManager* mgr = webkit_web_context_get_website_data_manager(global_context);
+        webkit_website_data_manager_clear(mgr, WEBKIT_WEBSITE_DATA_ALL, 0, NULL, NULL, NULL);
+        LOG("Cache and Cookies Cleared");
+        
+        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+        run_js(view, "alert('Cache Cleared Successfully!');");
     }
 }
 
@@ -164,36 +177,14 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
 GtkNotebook* get_notebook(GtkWidget* win) {
     return GTK_NOTEBOOK(g_object_get_data(G_OBJECT(win), "notebook"));
 }
-
 GtkEntry* get_url_bar(GtkWidget* win) {
     return GTK_ENTRY(g_object_get_data(G_OBJECT(win), "url_bar"));
 }
-
 WebKitWebView* get_active_webview(GtkWidget* win) {
     GtkNotebook* nb = get_notebook(win);
     int page = gtk_notebook_get_current_page(nb);
     if (page == -1) return nullptr;
     return WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(nb, page));
-}
-
-// --- Widget Updater ---
-static gboolean update_home_stats(gpointer data) {
-    GtkNotebook* notebook = get_notebook(GTK_WIDGET(data));
-    if (!notebook) return TRUE;
-
-    int pages = gtk_notebook_get_n_pages(notebook);
-    for (int i=0; i<pages; i++) {
-        WebKitWebView* view = WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(notebook, i));
-        const char* uri = webkit_web_view_get_uri(view);
-        
-        if (uri && std::string(uri).find("home.html") != std::string::npos) {
-            int cpu; std::string ram;
-            get_sys_stats(cpu, ram);
-            std::string script = "updateStats('" + std::to_string(cpu) + "', '" + ram + "');";
-            run_js(view, script);
-        }
-    }
-    return TRUE; 
 }
 
 // --- Tab Logic ---
@@ -205,17 +196,11 @@ static void on_tab_close(GtkButton*, gpointer v) {
 
 GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context) {
     GtkNotebook* notebook = get_notebook(win);
-    
     WebKitUserContentManager* ucm = webkit_user_content_manager_new();
     webkit_user_content_manager_register_script_message_handler(ucm, "zyro");
     
-    GtkWidget* view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "web-context", context,
-        "user-content-manager", ucm,
-        NULL));
-        
+    GtkWidget* view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
     g_object_set_data(G_OBJECT(view), "win", win);
-
     g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
 
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
@@ -231,16 +216,13 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_widget_show(view);
     
     g_signal_connect(close, "clicked", G_CALLBACK(on_tab_close), view);
-    
     g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
         const char* t = webkit_web_view_get_title(v); if(t) gtk_label_set_text(l, t); 
     }), label);
-    
     g_signal_connect(view, "load-changed", G_CALLBACK(+[](WebKitWebView* v, WebKitLoadEvent e, gpointer w){
         if(e == WEBKIT_LOAD_COMMITTED) {
              const char* u = webkit_web_view_get_uri(v);
-             if(u && std::string(u).find("file://") == std::string::npos) 
-                gtk_entry_set_text(get_url_bar(GTK_WIDGET(w)), u);
+             if(u && std::string(u).find("file://") == std::string::npos) gtk_entry_set_text(get_url_bar(GTK_WIDGET(w)), u);
              else gtk_entry_set_text(get_url_bar(GTK_WIDGET(w)), ""); 
         }
     }), win);
@@ -260,15 +242,38 @@ static void on_url_activate(GtkEntry* e, gpointer win) {
     gtk_widget_grab_focus(GTK_WIDGET(v));
 }
 
+// --- Menu Actions ---
+void on_incognito_clicked(GtkButton*, gpointer) {
+    // Create ephemeral (incognito) context
+    WebKitWebContext* ephemeral_ctx = webkit_web_context_new_ephemeral();
+    create_window(ephemeral_ctx); // Launch new window with this context
+}
+
+void on_settings_clicked(GtkButton*, gpointer win) {
+    // Open Settings tab in the current window
+    create_new_tab(GTK_WIDGET(win), settings.settings_url, global_context);
+}
+
+// --- Main Window Creation ---
 void create_window(WebKitWebContext* ctx) {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    global_window = win;
+
+    if (!webkit_web_context_is_ephemeral(ctx)) {
+        global_window = win;
+    }
+    
+    // Check if Incognito
+    if (webkit_web_context_is_ephemeral(ctx)) {
+        gtk_window_set_title(GTK_WINDOW(win), "Zyro (Incognito)");
+        // Optional: Style incognito window differently here
+    } else {
+        gtk_window_set_title(GTK_WINDOW(win), "Zyro");
+    }
+
     gtk_window_set_default_size(GTK_WINDOW(win), 1200, 800);
-    gtk_window_set_title(GTK_WINDOW(win), "Zyro");
     
+    // Load CSS
     std::string style_path = get_assets_path() + "style.css";
-    LOG("Loading CSS from: " + style_path);
-    
     GtkCssProvider* provider = gtk_css_provider_new();
     gtk_css_provider_load_from_path(provider, style_path.c_str(), NULL);
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -284,8 +289,7 @@ void create_window(WebKitWebContext* ctx) {
 
     auto mkbtn = [](const char* icon, const char* tooltip) { 
         GtkWidget* b = gtk_button_new_from_icon_name(icon, GTK_ICON_SIZE_BUTTON); 
-        gtk_widget_set_tooltip_text(b, tooltip);
-        return b; 
+        gtk_widget_set_tooltip_text(b, tooltip); return b; 
     };
     
     GtkWidget* b_back = mkbtn("go-previous-symbolic", "Back");
@@ -295,7 +299,42 @@ void create_window(WebKitWebContext* ctx) {
     GtkWidget* url = gtk_entry_new();
     g_object_set_data(G_OBJECT(win), "url_bar", url);
     GtkWidget* b_add = mkbtn("tab-new-symbolic", "New Tab");
-    GtkWidget* b_sett = mkbtn("emblem-system-symbolic", "Settings");
+    
+    // -- NEW: Menu Button --
+    GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu");
+    
+    // Create Popover for Menu
+    GtkWidget* popover = gtk_popover_new(b_menu);
+    gtk_style_context_add_class(gtk_widget_get_style_context(popover), "menu-popover");
+    
+    GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    
+    GtkWidget* btn_incog = gtk_button_new_with_label("New Incognito Window");
+    GtkWidget* btn_sett = gtk_button_new_with_label("Settings");
+    
+    // Remove default button borders for menu look
+    gtk_button_set_relief(GTK_BUTTON(btn_incog), GTK_RELIEF_NONE);
+    gtk_button_set_relief(GTK_BUTTON(btn_sett), GTK_RELIEF_NONE);
+
+    // Connect signals
+    g_signal_connect(btn_incog, "clicked", G_CALLBACK(on_incognito_clicked), NULL);
+    g_signal_connect(btn_sett, "clicked", G_CALLBACK(on_settings_clicked), win);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), btn_incog, FALSE, FALSE, 0);
+    
+    // Separator
+    GtkWidget* sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_name(sep, "menu-separator");
+    gtk_box_pack_start(GTK_BOX(menu_box), sep, FALSE, FALSE, 5);
+    
+    gtk_box_pack_start(GTK_BOX(menu_box), btn_sett, FALSE, FALSE, 0);
+    gtk_widget_show_all(menu_box);
+    gtk_container_add(GTK_CONTAINER(popover), menu_box);
+    
+    g_signal_connect(b_menu, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p){ 
+        gtk_popover_popup(GTK_POPOVER(p)); 
+    }), popover);
+    // -----------------------
 
     gtk_box_pack_start(GTK_BOX(toolbar), b_back, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
@@ -303,52 +342,48 @@ void create_window(WebKitWebContext* ctx) {
     gtk_box_pack_start(GTK_BOX(toolbar), b_home, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), url, TRUE, TRUE, 5);
     gtk_box_pack_start(GTK_BOX(toolbar), b_add, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), b_sett, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0); // Replaced settings button
 
     gtk_box_pack_start(GTK_BOX(box), toolbar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(win), box);
 
-    g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ 
-        WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_back(v); 
-    }), win);
-    
-    g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ 
-        WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_forward(v); 
-    }), win);
-    
-    g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ 
-        WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_reload(v); 
-    }), win);
-    
-    g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ 
-        WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_load_uri(v, settings.home_url.c_str()); 
-    }), win);
-    
-    g_signal_connect(b_sett, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ 
-        create_new_tab(GTK_WIDGET(w), settings.settings_url, global_context); 
-    }), win);
-
+    // Navigation Signals
+    g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_back(v); }), win);
+    g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_forward(v); }), win);
+    g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_reload(v); }), win);
+    g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_load_uri(v, settings.home_url.c_str()); }), win);
     g_signal_connect(b_add, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); }), win);
     g_signal_connect(url, "activate", G_CALLBACK(on_url_activate), win);
-
     g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-    gtk_widget_show_all(win);
-
-    create_new_tab(win, settings.home_url, ctx);
     
-    g_timeout_add(1000, update_home_stats, win);
+    gtk_widget_show_all(win);
+    create_new_tab(win, settings.home_url, ctx);
+}
+
+// --- Widget Updater (Stats) ---
+static gboolean update_home_stats(gpointer data) {
+    if(!global_window) return TRUE;
+    GtkNotebook* notebook = get_notebook(global_window);
+    if (!notebook) return TRUE;
+    int pages = gtk_notebook_get_n_pages(notebook);
+    for (int i=0; i<pages; i++) {
+        WebKitWebView* view = WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(notebook, i));
+        const char* uri = webkit_web_view_get_uri(view);
+        if (uri && std::string(uri).find("home.html") != std::string::npos) {
+            int cpu; std::string ram;
+            get_sys_stats(cpu, ram);
+            std::string script = "updateStats('" + std::to_string(cpu) + "', '" + ram + "');";
+            run_js(view, script);
+        }
+    }
+    return TRUE; 
 }
 
 int main(int argc, char** argv) {
     gtk_init(&argc, &argv);
     load_settings();
-    
-    // We can use the current dir for data/cache, 
-    // or properly use standard paths. For simplicity, we keep them local to execution.
-    char* cwd = g_get_current_dir();
-    std::string current(cwd);
-    g_free(cwd);
+    char* cwd = g_get_current_dir(); std::string current(cwd); g_free(cwd);
     
     std::string cache = current + "/cache";
     std::string data = current + "/data";
@@ -359,7 +394,8 @@ int main(int argc, char** argv) {
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
     webkit_cookie_manager_set_persistent_storage(webkit_web_context_get_cookie_manager(global_context), (data+"/cookies.sqlite").c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 
-    create_window(global_context);
+    create_window(global_context); // Launch main window
+    g_timeout_add(1000, update_home_stats, NULL);
     gtk_main();
     return 0;
 }

@@ -84,5 +84,40 @@ button#tab-close-btn:hover { background-color: #5f6368; color: white; }
 
 /* --- Menu Popover --- */
 popover { background-color: #292a2d; color: white; border: 1px solid #444; }
-popover button { border-radius: 4px; padding: 8px; text-align: left; }
+popover button { border-radius: 4px; padding: 8px; }
 popover button:hover { background-color: #3c4043; }
+
+
+/* --- Main Menu Popover --- */
+.menu-popover {
+    background-color: #292a2d;
+    border: 1px solid #444;
+    padding: 5px;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+}
+
+.menu-popover button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: #e8eaed;
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-size: 14px;
+    min-width: 200px;
+    min-height: auto;
+}
+
+.menu-popover button:hover {
+    background-color: #3c4043;
+    color: white;
+}
+
+.menu-separator {
+    height: 1px;
+    background-color: #444;
+    margin: 5px 0;
+}
