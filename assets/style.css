@@ -1,79 +1,88 @@
-/* Main Window */
-window { background-color: #202124; }
+/* --- Modern Dark Theme --- */
+* { font-family: 'Segoe UI', sans-serif; }
 
-/* Toolbar */
+/* Main Window Background */
+window { background-color: #1a1b1e; }
+
+/* --- Toolbar Area --- */
 box.toolbar {
-    background-color: #292a2d;
+    background-color: #202124;
+    padding: 8px 10px;
     border-bottom: 1px solid #1a1b1e;
-    padding: 8px 12px;
+    min-height: 44px;
 }
 
-/* URL Bar */
+/* --- URL Bar (Pill Shape) --- */
 entry {
-    background-color: #35363a;
+    background-color: #303134;
     color: #e8eaed;
-    border-radius: 18px;
+    border-radius: 20px; /* Pill shape */
     border: 1px solid transparent;
-    padding: 0 12px;
-    min-height: 34px;
+    padding: 0 16px;
+    margin: 0 8px;
+    font-size: 14px;
     caret-color: #8ab4f8;
+    transition: all 0.2s ease;
 }
+
 entry:focus {
     background-color: #202124;
-    border: 1px solid #8ab4f8;
+    border: 1px solid #8ab4f8; /* Blue border on focus */
+    box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2);
 }
 
-/* Buttons */
+entry selection { background-color: #174ea6; color: #ffffff; }
+
+/* --- Buttons (Flat & Clean) --- */
 button {
-    background: transparent;
+    background-image: none;
+    background-color: transparent;
     border: none;
-    color: #e8eaed;
-    border-radius: 50%;
+    box-shadow: none;
+    color: #9aa0a6;
+    border-radius: 50%; /* Circle hover */
+    padding: 6px;
     min-width: 32px;
     min-height: 32px;
+    transition: background 0.2s;
 }
-button:hover { background-color: #3c4043; }
+
+button:hover { background-color: #3c4043; color: #e8eaed; }
 button:active { background-color: #4d5156; }
 
-/* --- NEW: Tab Styling --- */
-notebook header {
-    background-color: #202124;
-    border: none;
-}
+/* --- Tabs (Chrome/Brave Style) --- */
+notebook { background-color: #1a1b1e; padding: 0; }
+notebook header { background-color: #1a1b1e; border: none; }
+notebook header.top { padding: 4px 4px 0 4px; }
 
 notebook tab {
-    background-color: #202124;
+    background-color: #1a1b1e;
     color: #9aa0a6;
     border: none;
-    min-height: 34px;
-    padding: 4px 12px;
+    border-radius: 8px 8px 0 0; /* Rounded top corners */
     margin: 0 2px;
-    border-radius: 8px 8px 0 0;
+    padding: 6px 12px;
+    font-size: 13px;
+    transition: background 0.1s;
 }
+
+notebook tab:hover { background-color: #292a2d; }
 
 notebook tab:checked {
-    background-color: #35363a; /* Active Tab */
+    background-color: #35363a; /* Active tab lighter */
     color: #e8eaed;
-    border-bottom: 2px solid #8ab4f8;
+    font-weight: bold;
 }
 
-notebook tab:hover {
-    background-color: #292a2d;
+/* Close button on tab */
+button#tab-close-btn {
+    min-width: 16px; min-height: 16px;
+    padding: 0; margin-left: 8px;
+    color: #9aa0a6;
 }
+button#tab-close-btn:hover { background-color: #5f6368; color: white; }
 
-/* Hide the ugly standard borders */
-notebook {
-    border: none;
-    padding: 0;
-}
-
-/* Darker toolbar for Incognito */
-window.incognito-window box.toolbar {
-    background-color: #000000;
-    border-bottom: 1px solid #333;
-}
-
-window.incognito-window entry {
-    background-color: #222;
-    color: #fff;
-}
+/* --- Menu Popover --- */
+popover { background-color: #292a2d; color: white; border: 1px solid #444; }
+popover button { border-radius: 4px; padding: 8px; text-align: left; }
+popover button:hover { background-color: #3c4043; }
