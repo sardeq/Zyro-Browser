@@ -101,10 +101,6 @@ button#tab-close-btn:hover { background-color: #5f6368; color: white; }
 }
 .menu-item:hover { background-color: #3c4043; color: #ffffff; }
 
-/* The box inside the button (holds Icon + Label) */
-.menu-item box {
-    border-spacing: 12px; /* Space between Icon and Text */
-}
 
 /* The Label inside the button */
 .menu-item label {
@@ -124,4 +120,31 @@ button#tab-close-btn:hover { background-color: #5f6368; color: white; }
     background-color: #4a4c50;
     margin: 6px 0;
     border: none;
+}
+
+
+/* Bookmarks Bar */
+box.bookmarks-bar {
+    background-color: #202124;
+    padding: 2px 10px 5px 10px;
+    border-bottom: 1px solid #1a1b1e;
+}
+
+/* Individual Bookmark Buttons */
+.bookmark-item {
+    background: transparent;
+    color: #9aa0a6;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.bookmark-item:hover {
+    background-color: #3c4043;
+    color: #e8eaed;
+}
+
+/* Secondary icon (Star) color */
+entry image.secondary {
+    color: #8ab4f8;
 }

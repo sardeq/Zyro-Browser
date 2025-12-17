@@ -195,6 +195,13 @@ struct PassItem {
     std::string pass;
 };
 
+struct BookmarkItem {
+    std::string title;
+    std::string url;
+};
+std::vector<BookmarkItem> bookmarks_list;
+GtkWidget* global_bookmarks_bar = nullptr;
+
 // --- Global State ---
 WebKitWebContext* global_context = nullptr; 
 GtkWidget* global_window = nullptr;
@@ -342,10 +349,16 @@ void save_passwords_to_disk() {
     }
 }
 
+void save_bookmarks_to_disk() {
+    std::ofstream f(get_user_data_dir() + "bookmarks.txt");
+    for (const auto& b : bookmarks_list) {
+        f << b.url << "|" << b.title << "\n";
+    }
+}
+
 void load_data() {
     std::string conf_dir = get_user_data_dir();
     
-    // 1. Settings
     GKeyFile* key_file = g_key_file_new();
     if (g_key_file_load_from_file(key_file, (conf_dir + "settings.ini").c_str(), G_KEY_FILE_NONE, NULL)) {
         gchar* engine = g_key_file_get_string(key_file, "General", "search_engine", NULL);
@@ -356,14 +369,12 @@ void load_data() {
     }
     g_key_file_free(key_file);
 
-    // 2. Search History
     std::ifstream s_file(conf_dir + "searches.txt");
     std::string line;
     while (std::getline(s_file, line)) {
         if (!line.empty()) search_history.push_back(line);
     }
 
-    // 3. Browsing History
     std::ifstream h_file(conf_dir + "history.txt");
     while (std::getline(h_file, line)) {
         size_t p1 = line.find('|');
@@ -377,7 +388,6 @@ void load_data() {
         }
     }
 
-    // 4. Passwords
     std::ifstream p_file(conf_dir + "passwords.txt");
     while (std::getline(p_file, line)) {
         std::stringstream ss(line);
@@ -395,7 +405,14 @@ void load_data() {
         }
     }
 
-    // 5. Assets
+    std::ifstream b_file(conf_dir + "bookmarks.txt");
+    while (std::getline(b_file, line)) {
+        size_t sep = line.find('|');
+        if (sep != std::string::npos) {
+            bookmarks_list.push_back({ line.substr(sep + 1), line.substr(0, sep) });
+        }
+    }
+
     if(!soup_session) soup_session = soup_session_new();
     std::string base = get_assets_path();
     settings.home_url = "file://" + base + "home.html";
@@ -406,6 +423,28 @@ void load_data() {
     settings.about_url = "file://" + base + "about.html"; 
     
     LOG("Data Loaded.");
+}
+
+void refresh_bookmarks_bar(GtkWidget* bar) {
+    GList *children, *iter;
+    children = gtk_container_get_children(GTK_CONTAINER(bar));
+    for(iter = children; iter != NULL; iter = g_list_next(iter))
+        gtk_widget_destroy(GTK_WIDGET(iter->data));
+    g_list_free(children);
+
+    for (const auto& b : bookmarks_list) {
+        GtkWidget* btn = gtk_button_new_with_label(b.title.c_str());
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn), "bookmark-item");
+        
+        g_signal_connect(btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer url_ptr){
+            std::string* u = (std::string*)url_ptr;
+            WebKitWebView* v = get_active_webview(global_window);
+            if(v) webkit_web_view_load_uri(v, u->c_str());
+        }), new std::string(b.url));
+
+        gtk_box_pack_start(GTK_BOX(bar), btn, FALSE, FALSE, 2);
+    }
+    gtk_widget_show_all(bar);
 }
 
 void save_settings(const std::string& engine, const std::string& theme) {
@@ -705,6 +744,22 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
              }
         }
     }
+    else if (type == "get_bookmarks") {
+        std::stringstream ss; ss << "[";
+        for(size_t i=0; i<bookmarks_list.size(); ++i) {
+            ss << "{ \"title\": \"" << bookmarks_list[i].title << "\", \"url\": \"" << bookmarks_list[i].url << "\" }";
+            if(i < bookmarks_list.size()-1) ss << ",";
+        }
+        ss << "]";
+        run_js(view, "renderBookmarks('" + ss.str() + "');");
+    }
+    else if (type == "delete_bookmark") {
+        int idx = get_json_int("index");
+        if(idx >= 0 && idx < bookmarks_list.size()) {
+            bookmarks_list.erase(bookmarks_list.begin() + idx);
+            save_bookmarks_to_disk();
+        }
+    }
     else if (type == "get_theme") {
         run_js(view, "setTheme('" + settings.theme + "');");
     }
@@ -820,11 +875,42 @@ WebKitWebView* get_active_webview(GtkWidget* win) {
     GList* children = gtk_container_get_children(GTK_CONTAINER(page));
     
     WebKitWebView* view = nullptr;
-    if (children && children->next) {
-        view = WEBKIT_WEB_VIEW(children->next->data);
+    for (GList* l = children; l != NULL; l = l->next) {
+        if (WEBKIT_IS_WEB_VIEW(l->data)) {
+            view = WEBKIT_WEB_VIEW(l->data);
+            break;
+        }
     }
     g_list_free(children);
     return view;
+}
+
+static gboolean update_home_stats(gpointer data) {
+    if(!global_window) return TRUE;
+    GtkNotebook* notebook = get_notebook(global_window);
+    if (!notebook) return TRUE;
+    
+    int pages = gtk_notebook_get_n_pages(notebook);
+    for (int i=0; i<pages; i++) {
+        GtkWidget* page_box = gtk_notebook_get_nth_page(notebook, i);
+        GList* children = gtk_container_get_children(GTK_CONTAINER(page_box));
+        
+        for (GList* l = children; l != NULL; l = l->next) {
+            if (WEBKIT_IS_WEB_VIEW(l->data)) {
+                WebKitWebView* view = WEBKIT_WEB_VIEW(l->data);
+                const char* uri = webkit_web_view_get_uri(view);
+                if (uri && std::string(uri).find("home.html") != std::string::npos) {
+                    int cpu; std::string ram;
+                    get_sys_stats(cpu, ram);
+                    std::string script = "updateStats('" + std::to_string(cpu) + "', '" + ram + "');";
+                    run_js(view, script);
+                }
+                break;
+            }
+        }
+        g_list_free(children);
+    }
+    return TRUE; 
 }
 
 void on_incognito_clicked(GtkButton*, gpointer);
@@ -1099,40 +1185,67 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_refresh, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_home, FALSE, FALSE, 0);
-    
-    // Address bar takes up remaining space
     gtk_box_pack_start(GTK_BOX(toolbar), url_entry, TRUE, TRUE, 5);
     gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0);
 
+    // Bookmarks Bar
+    GtkWidget* bookmarks_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_style_context_add_class(gtk_widget_get_style_context(bookmarks_bar), "bookmarks-bar");
+    refresh_bookmarks_bar(bookmarks_bar);
+
+    // Main Layout Container
     GtkWidget* page_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     g_object_set_data(G_OBJECT(page_box), "win", win); 
+    g_object_set_data(G_OBJECT(page_box), "bookmarks_bar", bookmarks_bar); // Store ref for updating
     
     gtk_box_pack_start(GTK_BOX(page_box), toolbar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page_box), bookmarks_bar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page_box), view, TRUE, TRUE, 0);
 
+    // Tab Header
     GtkWidget* tab_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     GtkWidget* label = gtk_label_new("New Tab");
     GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
     gtk_widget_set_name(close, "tab-close-btn");
-    
     gtk_box_pack_start(GTK_BOX(tab_header), label, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(tab_header), close, FALSE, FALSE, 0);
     gtk_widget_show_all(tab_header);
 
+    // Signals
     g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_back(WEBKIT_WEB_VIEW(v)); }), view);
     g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_forward(WEBKIT_WEB_VIEW(v)); }), view);
     g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_reload(WEBKIT_WEB_VIEW(v)); }), view);
     g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_load_uri(WEBKIT_WEB_VIEW(v), settings.home_url.c_str()); }), view);
     
     g_object_set_data(G_OBJECT(view), "entry", url_entry);
+    g_object_set_data(G_OBJECT(view), "page_box", page_box);
 
     g_signal_connect(url_entry, "changed", G_CALLBACK(on_url_changed), NULL);
     g_signal_connect(url_entry, "activate", G_CALLBACK(on_url_activate), view);
-    g_signal_connect(url_entry, "icon-press", G_CALLBACK(on_icon_press), view); // Connect Lock Icon Click
-    
+    g_signal_connect(url_entry, "icon-press", G_CALLBACK(on_icon_press), view); 
     g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url_entry);
-    
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), NULL);
+
+    // Star Button Logic
+    gtk_entry_set_icon_from_icon_name(GTK_ENTRY(url_entry), GTK_ENTRY_ICON_SECONDARY, "non-starred-symbolic");
+    g_signal_connect(url_entry, "icon-press", G_CALLBACK(+[](GtkEntry* entry, GtkEntryIconPosition pos, GdkEvent* ev, gpointer v_ptr){
+        if (pos == GTK_ENTRY_ICON_SECONDARY) {
+            WebKitWebView* view = WEBKIT_WEB_VIEW(v_ptr);
+            std::string url = webkit_web_view_get_uri(view);
+            const char* title = webkit_web_view_get_title(view);
+            if(url.empty()) return;
+
+            bookmarks_list.push_back({ title ? title : url, url });
+            save_bookmarks_to_disk();
+            
+            gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_SECONDARY, "starred-symbolic");
+            
+            // Refresh bar in current tab
+            GtkWidget* p_box = (GtkWidget*)g_object_get_data(G_OBJECT(view), "page_box");
+            GtkWidget* b_bar = (GtkWidget*)g_object_get_data(G_OBJECT(p_box), "bookmarks_bar");
+            refresh_bookmarks_bar(b_bar);
+        }
+    }), view);
 
     g_signal_connect(view, "notify::uri", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, gpointer){ 
         GtkEntry* e = GTK_ENTRY(g_object_get_data(G_OBJECT(v), "entry"));
@@ -1140,7 +1253,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     }), NULL);
 
     g_signal_connect(view, "decide-policy", G_CALLBACK(on_decide_policy), win);
-    
     g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
         const char* t = webkit_web_view_get_title(v); if(t) gtk_label_set_text(l, t); 
     }), label);
@@ -1151,7 +1263,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     int page = gtk_notebook_append_page(notebook, page_box, tab_header);
     gtk_notebook_set_tab_reorderable(notebook, page_box, TRUE);
     gtk_widget_show_all(page_box);
-    
     gtk_notebook_set_current_page(notebook, page);
     webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
     
@@ -1271,31 +1382,6 @@ void create_window(WebKitWebContext* ctx) {
     gtk_widget_show_all(win);
     
     create_new_tab(win, settings.home_url, ctx);
-}
-
-static gboolean update_home_stats(gpointer data) {
-    if(!global_window) return TRUE;
-    GtkNotebook* notebook = get_notebook(global_window);
-    if (!notebook) return TRUE;
-    
-    int pages = gtk_notebook_get_n_pages(notebook);
-    for (int i=0; i<pages; i++) {
-        GtkWidget* page_box = gtk_notebook_get_nth_page(notebook, i);
-        GList* children = gtk_container_get_children(GTK_CONTAINER(page_box));
-        
-        if (children && children->next) {
-            WebKitWebView* view = WEBKIT_WEB_VIEW(children->next->data);
-            const char* uri = webkit_web_view_get_uri(view);
-            if (uri && std::string(uri).find("home.html") != std::string::npos) {
-                int cpu; std::string ram;
-                get_sys_stats(cpu, ram);
-                std::string script = "updateStats('" + std::to_string(cpu) + "', '" + ram + "');";
-                run_js(view, script);
-            }
-        }
-        g_list_free(children);
-    }
-    return TRUE; 
 }
 
 

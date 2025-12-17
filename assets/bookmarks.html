@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bookmarks Manager</title>
+    <style>
+        :root { --bg: #1a1b1e; --panel: #202124; --text: #e8eaed; --accent: #8ab4f8; }
+        body.theme-light { --bg: #f1f3f4; --panel: #ffffff; --text: #202124; --accent: #1a73e8; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
+        
+        .bookmark-item { 
+            background: var(--panel); padding: 15px; margin-bottom: 10px; border-radius: 8px; 
+            display: flex; align-items: center; justify-content: space-between; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+        }
+        .info { flex: 1; cursor: pointer; }
+        .title { font-weight: bold; display: block; }
+        .url { font-size: 0.8em; color: #9aa0a6; }
+        
+        button.del-btn { background: #e06c75; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+    </style>
+</head>
+<body class="theme-dark">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1>Bookmarks</h1>
+        <input type="text" id="searchBar" placeholder="Search bookmarks..." 
+               style="background: var(--panel); border: 1px solid #444; color: white; padding: 10px; border-radius: 20px; width: 250px;"
+               oninput="filterBookmarks()">
+    </div>
+    <div id="list"></div>
+
+    <script>
+        let allBookmarks = [];
+
+        function renderBookmarks(jsonStr) {
+            allBookmarks = JSON.parse(jsonStr);
+            displayFiltered(allBookmarks);
+        }
+
+        function displayFiltered(data) {
+            const list = document.getElementById('list');
+            list.innerHTML = '';
+            if(data.length === 0) list.innerHTML = '<p>No matching bookmarks found.</p>';
+
+            data.forEach((b) => {
+                // Find original index for deletion
+                const originalIndex = allBookmarks.indexOf(b);
+                const div = document.createElement('div');
+                div.className = 'bookmark-item';
+                div.innerHTML = `
+                    <div class="info" onclick="openUrl('${b.url}')">
+                        <span class="title">${b.title}</span>
+                        <span class="url">${b.url}</span>
+                    </div>
+                    <button class="del-btn" onclick="deleteBookmark(${originalIndex})">Remove</button>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function filterBookmarks() {
+            const query = document.getElementById('searchBar').value.toLowerCase();
+            const filtered = allBookmarks.filter(b => 
+                b.title.toLowerCase().includes(query) || 
+                b.url.toLowerCase().includes(query)
+            );
+            displayFiltered(filtered);
+        }
+
+        function openUrl(url) { window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'open_url', url: url })); }
+        function deleteBookmark(idx) {
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'delete_bookmark', index: idx }));
+            setTimeout(refresh, 50);
+        }
+        function refresh() { window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_bookmarks' })); }
+        function setTheme(themeName) { document.body.className = 'theme-' + themeName; }
+
+        window.onload = () => {
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_theme' }));
+            refresh();
+        }
+    </script>
+</body>
+</html>
