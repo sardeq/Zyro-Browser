@@ -8,25 +8,24 @@
 #include <sstream>
 #include <regex>
 #include <algorithm>
-#include <cstring> // For strlen/strncmp
+#include <cstring> 
 
-// --- Forward Declarations for internal helpers ---
+// --- Forward Declarations ---
 void show_site_info_popover(GtkEntry* entry, WebKitWebView* view);
 void show_menu(GtkButton* btn, gpointer win);
 void on_url_activate(GtkEntry* e, gpointer view_ptr);
 static void on_url_changed(GtkEditable* editable, gpointer user_data);
+static GtkWidget* on_web_view_create(WebKitWebView* web_view, WebKitNavigationAction* navigation_action, gpointer user_data);
 
-// --- Helper: Run JS ---
+// --- Helpers ---
 void run_js(WebKitWebView* view, const std::string& script) {
     webkit_web_view_evaluate_javascript(view, script.c_str(), -1, NULL, NULL, NULL, NULL, NULL);
 }
 
-// --- UI Helper: Get Notebook ---
 GtkNotebook* get_notebook(GtkWidget* win) {
     return GTK_NOTEBOOK(g_object_get_data(G_OBJECT(win), "notebook"));
 }
 
-// --- UI Helper: Get Active Webview ---
 WebKitWebView* get_active_webview(GtkWidget* win) {
     GtkNotebook* nb = get_notebook(win);
     int page_num = gtk_notebook_get_current_page(nb);
@@ -314,7 +313,6 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     }
     else if (type == "clear_cache") {
         WebKitWebsiteDataManager* mgr = webkit_web_context_get_website_data_manager(global_context);
-        // FIX: Removed extra NULL at the end
         webkit_website_data_manager_clear(mgr, WEBKIT_WEBSITE_DATA_ALL, 0, NULL, NULL, NULL);
         run_js(view, "showToast('Cache Cleared');"); 
     }
@@ -580,6 +578,13 @@ static gboolean on_decide_policy(WebKitWebView* v, WebKitPolicyDecision* decisio
     return FALSE;
 }
 
+// --- Handler for create signal (target="_blank") ---
+static GtkWidget* on_web_view_create(WebKitWebView* web_view, WebKitNavigationAction* navigation_action, gpointer user_data) {
+    GtkWidget* win = GTK_WIDGET(user_data);
+    // FIX: Pass 'web_view' as the related view to avoid assertion failure
+    return create_new_tab(win, "", global_context, web_view);
+}
+
 // --- Site Info Popover ---
 void show_site_info_popover(GtkEntry* entry, WebKitWebView* view) {
     const char* uri = webkit_web_view_get_uri(view);
@@ -671,12 +676,26 @@ void show_menu(GtkButton* btn, gpointer win) {
 }
 
 // --- CREATE NEW TAB (Main UI Builder) ---
-GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context) {
+GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context, WebKitWebView* related_view) {
     GtkNotebook* notebook = get_notebook(win);
     
     WebKitUserContentManager* ucm = webkit_user_content_manager_new();
     webkit_user_content_manager_register_script_message_handler(ucm, "zyro");
-    GtkWidget* view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
+    
+    // FIX: Remove "web-context" when "related-view" is present
+    GtkWidget* view;
+    if (related_view) {
+        view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, 
+            "user-content-manager", ucm, 
+            "related-view", related_view,
+            NULL));
+    } else {
+        view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, 
+            "web-context", context, 
+            "user-content-manager", ucm, 
+            NULL));
+    }
+
     g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
 
     GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
@@ -841,6 +860,9 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     }), NULL);
 
     g_signal_connect(view, "decide-policy", G_CALLBACK(on_decide_policy), win);
+    // Connect to the create signal to handle new windows/tabs (e.g. target="_blank")
+    g_signal_connect(view, "create", G_CALLBACK(on_web_view_create), win);
+    
     g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
         const char* t = webkit_web_view_get_title(v); if(t) gtk_label_set_text(l, t); 
     }), label);
@@ -852,7 +874,11 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_notebook_set_tab_reorderable(notebook, page_box, TRUE);
     gtk_widget_show_all(page_box);
     gtk_notebook_set_current_page(notebook, page);
-    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
+    
+    // Only load if a URL is provided. WebKit handles loading for "create" signals automatically.
+    if (!url.empty()) {
+        webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
+    }
     
     return view;
 }

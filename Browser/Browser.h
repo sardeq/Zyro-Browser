@@ -4,7 +4,7 @@
 #include <string>
 
 void create_window(WebKitWebContext* ctx);
-GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context);
+GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context, WebKitWebView* related_view = nullptr);
 GtkNotebook* get_notebook(GtkWidget* win);
 WebKitWebView* get_active_webview(GtkWidget* win);
 void run_js(WebKitWebView* view, const std::string& script);
