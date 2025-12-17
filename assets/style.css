@@ -1,4 +1,3 @@
-/* --- Modern Dark Theme --- */
 * { font-family: 'Segoe UI', sans-serif; }
 
 /* Main Window Background */
@@ -12,7 +11,6 @@ box.toolbar {
     min-height: 44px;
 }
 
-/* --- URL Bar (Pill Shape) --- */
 entry {
     background-color: #303134;
     color: #e8eaed;
@@ -92,28 +90,51 @@ popover button:hover { background-color: #3c4043; }
 .menu-popover {
     background-color: #292a2d;
     border: 1px solid #444;
-    padding: 5px;
+    padding: 6px 0; /* Vertical padding only */
     border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
 }
 
-.menu-popover button {
+/* The buttons inside the menu */
+.menu-item {
     background: transparent;
     border: none;
     color: #e8eaed;
-    padding: 10px 15px;
-    border-radius: 4px;
-    font-size: 14px;
-    min-width: 200px;
-    min-height: 30px;
+    border-radius: 0; /* Full width feel */
+    min-height: 36px;
+    padding: 0 20px;
+    margin: 0;
+    box-shadow: none;
+    text-shadow: none;
+    transition: background 0.1s;
 }
 
-.menu-popover button:hover {
+.menu-item:hover {
     background-color: #3c4043;
-    color: white;
+    color: #ffffff;
 }
 
+/* The box inside the button (holds Icon + Label) */
+.menu-item box {
+    border-spacing: 12px; /* Space between Icon and Text */
+}
+
+/* The Label inside the button */
+.menu-item label {
+    font-size: 13px;
+    font-weight: normal;
+}
+
+/* The Icon inside the button */
+.menu-item image {
+    color: #9aa0a6;
+    margin-right: 12px;
+}
+
+/* Separators */
 .menu-separator {
     min-height: 1px;
-    background-color: #444;
-    margin: 5px 0;
+    background-color: #4a4c50;
+    margin: 6px 0;
+    border: none;
 }

@@ -360,25 +360,67 @@ void create_window(WebKitWebContext* ctx) {
     
     GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
-    GtkWidget* btn_incog = gtk_button_new_with_label("New Incognito Window");
-    GtkWidget* btn_sett = gtk_button_new_with_label("Settings");
-    
-    // Remove default button borders for menu look
-    gtk_button_set_relief(GTK_BUTTON(btn_incog), GTK_RELIEF_NONE);
-    gtk_button_set_relief(GTK_BUTTON(btn_sett), GTK_RELIEF_NONE);
+    // --- Helper to create styled Menu Items ---
+    auto mk_menu_item = [&](const char* label, const char* icon_name, GCallback cb, gpointer data) {
+        GtkWidget* btn = gtk_button_new();
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn), "menu-item");
+        gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
+        
+        GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
+        GtkWidget* lbl = gtk_label_new(label);
+        
+        gtk_box_pack_start(GTK_BOX(box), img, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(btn), box);
+        
+        if (cb) g_signal_connect(btn, "clicked", cb, data);
+        
+        // Auto-close popover on click
+        g_signal_connect_swapped(btn, "clicked", G_CALLBACK(gtk_widget_hide), popover);
+        
+        return btn;
+    };
 
-    // Connect signals
-    g_signal_connect(btn_incog, "clicked", G_CALLBACK(on_incognito_clicked), NULL);
-    g_signal_connect(btn_sett, "clicked", G_CALLBACK(on_settings_clicked), win);
+    auto mk_sep = [&]() {
+        GtkWidget* s = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+        gtk_widget_set_name(s, "menu-separator");
+        return s;
+    };
 
-    gtk_box_pack_start(GTK_BOX(menu_box), btn_incog, FALSE, FALSE, 0);
+    // --- Menu Items Construction ---
     
-    // Separator
-    GtkWidget* sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_widget_set_name(sep, "menu-separator");
-    gtk_box_pack_start(GTK_BOX(menu_box), sep, FALSE, FALSE, 5);
+    // Group 1: New Tabs/Windows
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Tab", "tab-new-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){ 
+        create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); 
+    }), win), FALSE, FALSE, 0);
     
-    gtk_box_pack_start(GTK_BOX(menu_box), btn_sett, FALSE, FALSE, 0);
+    // Re-use your existing on_incognito_clicked
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Incognito Window", "user-trash-symbolic", G_CALLBACK(on_incognito_clicked), NULL), FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
+
+    // Group 2: History/Downloads (Placeholders)
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("History", "document-open-recent-symbolic", NULL, NULL), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Downloads", "folder-download-symbolic", NULL, NULL), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Bookmarks", "star-new-symbolic", NULL, NULL), FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
+
+    // Group 3: Tools
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Print...", "printer-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
+        WebKitWebView* v = get_active_webview(GTK_WIDGET(w));
+        if(v) webkit_web_view_run_javascript(v, "window.print();", NULL, NULL, NULL);
+    }), win), FALSE, FALSE, 0);
+
+    // Re-use your existing on_settings_clicked
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Settings", "preferences-system-symbolic", G_CALLBACK(on_settings_clicked), win), FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
+
+    // Group 4: Exit
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Exit Zyro", "application-exit-symbolic", G_CALLBACK(gtk_main_quit), NULL), FALSE, FALSE, 0);
+
     gtk_widget_show_all(menu_box);
     gtk_container_add(GTK_CONTAINER(popover), menu_box);
     
@@ -393,7 +435,7 @@ void create_window(WebKitWebContext* ctx) {
     gtk_box_pack_start(GTK_BOX(toolbar), b_home, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), url, TRUE, TRUE, 5);
     gtk_box_pack_start(GTK_BOX(toolbar), b_add, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0); // Replaced settings button
+    gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0); 
 
     gtk_box_pack_start(GTK_BOX(box), toolbar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);
