@@ -20,15 +20,17 @@ struct AppSettings {
     std::string home_url = "file://"; 
     std::string settings_url = "file://";
     std::string search_engine = "https://www.google.com/search?q=";
+    std::string suggestion_api = "http://suggestqueries.google.com/complete/search?client=firefox&q=";
     std::string theme = "dark";
 } settings;
 
 WebKitWebContext* global_context = nullptr; 
 GtkWidget* global_window = nullptr;
+SoupSession* soup_session = nullptr; // For network requests
 
 void create_window(WebKitWebContext* ctx);
-
 GtkNotebook* get_notebook(GtkWidget* win);
+void run_js(WebKitWebView* view, const std::string& script); 
 
 // --- Path Helpers ---
 std::string get_assets_path() {
@@ -59,6 +61,89 @@ std::string get_config_path() {
     const char* home = g_get_home_dir();
     return std::string(home) + "/.config/zyro/settings.ini";
 }
+
+std::vector<std::string> parse_suggestions(const std::string& json) {
+    std::vector<std::string> results;
+    try {
+        size_t start_arr = json.find('[', 1); // Find start of ["sug1", ...]
+        if (start_arr == std::string::npos) return results;
+        
+        size_t end_arr = json.find(']', start_arr);
+        if (end_arr == std::string::npos) return results;
+
+        std::string list_content = json.substr(start_arr + 1, end_arr - start_arr - 1);
+        
+        // Regex to match "string"
+        std::regex re("\"([^\"]+)\"");
+        auto begin = std::sregex_iterator(list_content.begin(), list_content.end(), re);
+        auto end = std::sregex_iterator();
+
+        for (std::sregex_iterator i = begin; i != end; ++i) {
+            std::smatch match = *i;
+            results.push_back(match[1].str());
+        }
+    } catch (...) {}
+    return results;
+}
+
+void on_suggestion_fetched_gtk(SoupSession* session, SoupMessage* msg, gpointer user_data) {
+    if (msg->status_code != 200) return;
+
+    GtkEntryCompletion* completion = GTK_ENTRY_COMPLETION(user_data);
+    GtkListStore* store = GTK_LIST_STORE(gtk_entry_completion_get_model(completion));
+    
+    std::string body = msg->response_body->data;
+    std::vector<std::string> sugs = parse_suggestions(body);
+
+    gtk_list_store_clear(store);
+    GtkTreeIter iter;
+    for (const auto& s : sugs) {
+        gtk_list_store_append(store, &iter);
+        gtk_list_store_set(store, &iter, 0, s.c_str(), -1);
+    }
+    // Force popup refresh
+    gtk_entry_completion_complete(completion);
+}
+
+// 2. Callback for Home Page (HTML/JS)
+struct HomeFetchData { WebKitWebView* view; };
+
+void on_suggestion_fetched_js(SoupSession* session, SoupMessage* msg, gpointer user_data) {
+    HomeFetchData* data = (HomeFetchData*)user_data;
+    if (msg->status_code == 200) {
+        std::string body = msg->response_body->data;
+        std::vector<std::string> sugs = parse_suggestions(body);
+        
+        // Build JS Array string: ['a', 'b']
+        std::stringstream js_array;
+        js_array << "[";
+        for (size_t i = 0; i < sugs.size(); ++i) {
+            js_array << "'" << sugs[i] << "'";
+            if (i < sugs.size() - 1) js_array << ",";
+        }
+        js_array << "]";
+
+        std::string script = "renderSuggestions(" + js_array.str() + ");";
+        run_js(data->view, script);
+    }
+    delete data;
+}
+
+// Trigger Fetch
+void fetch_suggestions(const std::string& query, bool is_gtk, gpointer target) {
+    if (query.length() < 2) return; // Don't fetch for 1 char
+    
+    std::string url = settings.suggestion_api + query;
+    SoupMessage* msg = soup_message_new("GET", url.c_str());
+    
+    if (is_gtk) {
+        soup_session_queue_message(soup_session, msg, on_suggestion_fetched_gtk, target);
+    } else {
+        HomeFetchData* data = new HomeFetchData{ WEBKIT_WEB_VIEW(target) };
+        soup_session_queue_message(soup_session, msg, on_suggestion_fetched_js, data);
+    }
+}
+
 
 // --- System Stats Helper ---
 void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
@@ -137,6 +222,7 @@ void load_settings() {
     }
     g_key_file_free(key_file);
     
+    if(!soup_session) soup_session = soup_session_new();
     std::string base = get_assets_path();
     settings.home_url = "file://" + base + "home.html";
     settings.settings_url = "file://" + base + "settings.html";
@@ -196,12 +282,15 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     // 2. SWITCH BASED ON TYPE
     if (type == "search") {
         std::string query = get_json_val("query");
-        if (!query.empty()) {
-            WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
-            std::string url = settings.search_engine + query;
-            webkit_web_view_load_uri(view, url.c_str());
-        }
-    } 
+        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+        std::string url = settings.search_engine + query;
+        webkit_web_view_load_uri(view, url.c_str());
+    }
+    else if (type == "get_suggestions") {
+        std::string query = get_json_val("query");
+        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+        fetch_suggestions(query, false, view);
+    }
     else if (type == "save_settings") {
         std::string engine = get_json_val("engine");
         std::string theme = get_json_val("theme");
@@ -309,6 +398,15 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     return view;
 }
 
+static void on_url_changed(GtkEditable* editable, gpointer user_data) {
+    std::string text = gtk_entry_get_text(GTK_ENTRY(editable));
+    // If it looks like a URL, don't suggest
+    if (text.find("://") != std::string::npos || text.find(".") != std::string::npos) return;
+    
+    GtkEntryCompletion* completion = gtk_entry_get_completion(GTK_ENTRY(editable));
+    fetch_suggestions(text, true, completion);
+}
+
 static void on_url_activate(GtkEntry* e, gpointer win) {
     WebKitWebView* v = get_active_webview(GTK_WIDGET(win));
     if (!v) return;
@@ -319,19 +417,24 @@ static void on_url_activate(GtkEntry* e, gpointer win) {
     gtk_widget_grab_focus(GTK_WIDGET(v));
 }
 
-// --- Menu Actions ---
+static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* model, GtkTreeIter* iter, gpointer entry) {
+    gchar* value;
+    gtk_tree_model_get(model, iter, 0, &value, -1);
+    gtk_entry_set_text(GTK_ENTRY(entry), value);
+    std::string url = settings.search_engine + std::string(value);
+    g_free(value);
+    return TRUE;
+}
+
 void on_incognito_clicked(GtkButton*, gpointer) {
-    // Create ephemeral (incognito) context
     WebKitWebContext* ephemeral_ctx = webkit_web_context_new_ephemeral();
-    create_window(ephemeral_ctx); // Launch new window with this context
+    create_window(ephemeral_ctx);
 }
 
 void on_settings_clicked(GtkButton*, gpointer win) {
-    // Open Settings tab in the current window
     create_new_tab(GTK_WIDGET(win), settings.settings_url, global_context);
 }
 
-// --- Main Window Creation ---
 void create_window(WebKitWebContext* ctx) {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
@@ -342,7 +445,7 @@ void create_window(WebKitWebContext* ctx) {
     // Check if Incognito
     if (webkit_web_context_is_ephemeral(ctx)) {
         gtk_window_set_title(GTK_WINDOW(win), "Zyro (Incognito)");
-        // Optional: Style incognito window differently here
+        gtk_style_context_add_class(gtk_widget_get_style_context(win), "incognito");
     } else {
         gtk_window_set_title(GTK_WINDOW(win), "Zyro");
     }
@@ -373,11 +476,28 @@ void create_window(WebKitWebContext* ctx) {
     GtkWidget* b_fwd = mkbtn("go-next-symbolic", "Forward");
     GtkWidget* b_refresh = mkbtn("view-refresh-symbolic", "Reload");
     GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
+    GtkWidget* b_add = mkbtn("tab-new-symbolic", "New Tab");
+
+    // --- URL Bar with Suggestions (MERGED HERE) ---
     GtkWidget* url = gtk_entry_new();
     g_object_set_data(G_OBJECT(win), "url_bar", url);
-    GtkWidget* b_add = mkbtn("tab-new-symbolic", "New Tab");
+
+    // 1. Setup Completion
+    GtkEntryCompletion* completion = gtk_entry_completion_new();
+    GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
+    gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(store));
+    gtk_entry_completion_set_text_column(completion, 0);
+    gtk_entry_completion_set_popup_completion(completion, TRUE);
+    gtk_entry_completion_set_inline_completion(completion, FALSE);
+    gtk_entry_set_completion(GTK_ENTRY(url), completion);
     
-    // -- NEW: Menu Button --
+    // 2. Connect Signals for Suggestions
+    g_signal_connect(url, "changed", G_CALLBACK(on_url_changed), NULL);
+    g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url);
+    g_object_unref(completion);
+    // ---------------------------------------------
+    
+    // -- Menu Button Logic --
     GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu");
     
     // Create Popover for Menu
@@ -421,7 +541,6 @@ void create_window(WebKitWebContext* ctx) {
         create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); 
     }), win), FALSE, FALSE, 0);
     
-    // Re-use your existing on_incognito_clicked
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Incognito Window", "user-trash-symbolic", G_CALLBACK(on_incognito_clicked), NULL), FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
@@ -436,11 +555,9 @@ void create_window(WebKitWebContext* ctx) {
     // Group 3: Tools
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Print...", "printer-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
         WebKitWebView* v = get_active_webview(GTK_WIDGET(w));
-        // FIX: Use your existing run_js helper instead of the deprecated function
         if(v) run_js(v, "window.print();"); 
     }), win), FALSE, FALSE, 0);
 
-    // Re-use your existing on_settings_clicked
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Settings", "preferences-system-symbolic", G_CALLBACK(on_settings_clicked), win), FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
@@ -474,14 +591,16 @@ void create_window(WebKitWebContext* ctx) {
     g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_reload(v); }), win);
     g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_load_uri(v, settings.home_url.c_str()); }), win);
     g_signal_connect(b_add, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); }), win);
+    
+    // URL Activate (Load URL on Enter)
     g_signal_connect(url, "activate", G_CALLBACK(on_url_activate), win);
+    
     g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     
     gtk_widget_show_all(win);
     create_new_tab(win, settings.home_url, ctx);
 }
 
-// --- Widget Updater (Stats) ---
 static gboolean update_home_stats(gpointer data) {
     if(!global_window) return TRUE;
     GtkNotebook* notebook = get_notebook(global_window);
@@ -503,8 +622,8 @@ static gboolean update_home_stats(gpointer data) {
 int main(int argc, char** argv) {
     gtk_init(&argc, &argv);
     load_settings();
-    char* cwd = g_get_current_dir(); std::string current(cwd); g_free(cwd);
     
+    char* cwd = g_get_current_dir(); std::string current(cwd); g_free(cwd);
     std::string cache = current + "/cache";
     std::string data = current + "/data";
     g_mkdir_with_parents(cache.c_str(), 0755);
@@ -514,7 +633,7 @@ int main(int argc, char** argv) {
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
     webkit_cookie_manager_set_persistent_storage(webkit_web_context_get_cookie_manager(global_context), (data+"/cookies.sqlite").c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 
-    create_window(global_context); // Launch main window
+    create_window(global_context); 
     g_timeout_add(1000, update_home_stats, NULL);
     gtk_main();
     return 0;

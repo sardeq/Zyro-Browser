@@ -7,30 +7,50 @@
         :root { --bg: #1a1b1e; --accent: #8ab4f8; --text: #e8eaed; --panel: #202124; }
         body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; transition: background 0.3s; }
         
-        /* Theme Classes */
         body.theme-light { --bg: #f1f3f4; --text: #202124; --panel: #ffffff; --accent: #1a73e8; }
         
         h1 { font-size: 4rem; margin-bottom: 20px; font-weight: 300; letter-spacing: -2px; }
         
-        /* Search Box */
-        .search-box {
-            width: 600px; max-width: 90%; background: var(--panel);
-            border-radius: 30px; padding: 12px 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            display: flex; align-items: center; transition: transform 0.2s, box-shadow 0.2s;
+        /* Search Container to hold input and suggestions */
+        .search-container {
+            width: 600px; max-width: 90%; position: relative; z-index: 10;
         }
-        .search-box:hover, .search-box:focus-within { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); }
+
+        .search-box {
+            width: 100%; background: var(--panel);
+            border-radius: 30px; padding: 12px 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            display: flex; align-items: center; box-sizing: border-box;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        /* Remove bottom rounded corners when suggestions are open */
+        .search-box.open { border-radius: 24px 24px 0 0; box-shadow: 0 4px 5px rgba(0,0,0,0.1); }
+
         input { flex: 1; background: transparent; border: none; font-size: 18px; color: var(--text); outline: none; margin-left: 10px; }
         
-        /* Widgets Area */
-        .widgets { margin-top: 60px; display: flex; gap: 20px; }
-        .widget {
-            background: var(--panel); padding: 15px 25px; border-radius: 16px;
-            min-width: 140px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        /* Suggestion Dropdown */
+        .suggestions {
+            position: absolute; top: 100%; left: 0; right: 0;
+            background: var(--panel);
+            border-top: 1px solid #333;
+            border-radius: 0 0 24px 24px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            display: none; flex-direction: column; overflow: hidden;
         }
-        .widget h3 { margin: 0; font-size: 14px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; }
+        body.theme-light .suggestions { border-top: 1px solid #ddd; }
+        
+        .suggestion-item {
+            padding: 10px 24px; cursor: pointer; display: flex; align-items: center;
+        }
+        .suggestion-item:hover { background-color: rgba(138, 180, 248, 0.1); }
+        .suggestion-item svg { margin-right: 15px; opacity: 0.5; width: 16px; height: 16px; }
+
+        /* Widgets */
+        .widgets { margin-top: 60px; display: flex; gap: 20px; z-index: 1; }
+        .widget { background: var(--panel); padding: 15px 25px; border-radius: 16px; min-width: 140px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .widget h3 { margin: 0; font-size: 14px; opacity: 0.7; }
         .widget .value { font-size: 24px; font-weight: bold; color: var(--accent); margin-top: 5px; }
         
-        /* Background decorative blob */
         .blob { position: absolute; width: 600px; height: 600px; background: radial-gradient(circle, var(--accent) 0%, transparent 70%); opacity: 0.05; z-index: -1; border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%); }
     </style>
 </head>
@@ -38,45 +58,97 @@
     <div class="blob"></div>
     <h1>Zyro Browser</h1>
     
-    <div class="search-box">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-        <input type="text" id="search" placeholder="Search the web..." autofocus>
+    <div class="search-container">
+        <div class="search-box" id="sb">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="search" placeholder="Search the web..." autocomplete="off" autofocus>
+        </div>
+        <div class="suggestions" id="suggestions"></div>
     </div>
 
     <div class="widgets">
-        <div class="widget">
-            <h3>CPU Usage</h3>
-            <div class="value" id="cpu-val">0%</div>
-        </div>
-        <div class="widget">
-            <h3>RAM Usage</h3>
-            <div class="value" id="ram-val">0 GB</div>
-        </div>
+        <div class="widget"> <h3>CPU Usage</h3> <div class="value" id="cpu-val">0%</div> </div>
+        <div class="widget"> <h3>RAM Usage</h3> <div class="value" id="ram-val">0 GB</div> </div>
     </div>
 
     <script>
         const searchInput = document.getElementById('search');
-        
-        // Handle Search
+        const suggestBox = document.getElementById('suggestions');
+        const searchBox = document.getElementById('sb');
+        let debounceTimer;
+
+        // Send Search
+        function doSearch(query) {
+            if(query) window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'search', query: query }));
+        }
+
         searchInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
-                const query = searchInput.value;
-                if(query) window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'search', query: query }));
+                doSearch(searchInput.value);
             }
         });
 
-        // Update Theme from JS call
-        function setTheme(themeName) {
-            document.body.className = 'theme-' + themeName;
+        // Handle Input for suggestions
+        searchInput.addEventListener('input', () => {
+            const query = searchInput.value;
+            clearTimeout(debounceTimer);
+            
+            if (query.length < 2) {
+                hideSuggestions();
+                return;
+            }
+
+            // Debounce to prevent spamming C++ with requests
+            debounceTimer = setTimeout(() => {
+                window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_suggestions', query: query }));
+            }, 200);
+        });
+        
+        // Called from C++
+        function renderSuggestions(items) {
+            suggestBox.innerHTML = '';
+            if (!items || items.length === 0) {
+                hideSuggestions();
+                return;
+            }
+
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'suggestion-item';
+                div.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <span>${item}</span>
+                `;
+                div.onclick = () => doSearch(item);
+                suggestBox.appendChild(div);
+            });
+            
+            showSuggestions();
         }
 
-        // Update Stats from JS call
+        function showSuggestions() {
+            suggestBox.style.display = 'flex';
+            searchBox.classList.add('open');
+        }
+
+        function hideSuggestions() {
+            suggestBox.style.display = 'none';
+            searchBox.classList.remove('open');
+        }
+
+        // Hide when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!document.querySelector('.search-container').contains(e.target)) {
+                hideSuggestions();
+            }
+        });
+
+        function setTheme(themeName) { document.body.className = 'theme-' + themeName; }
         function updateStats(cpu, ram) {
             document.getElementById('cpu-val').innerText = cpu + "%";
             document.getElementById('ram-val').innerText = ram;
         }
         
-        // Request initial theme
         window.onload = () => window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_theme' }));
     </script>
 </body>
