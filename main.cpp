@@ -220,26 +220,30 @@ void run_js(WebKitWebView* view, const std::string& script);
 GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context);
 WebKitWebView* get_active_webview(GtkWidget* win);
 
-// --- Path & Time Helpers ---
-std::string get_assets_path() {
-    char* cwd = g_get_current_dir();
-    std::string current(cwd);
-    g_free(cwd);
+std::string get_self_path() {
+    char buff[4096];
+    ssize_t len = readlink("/proc/self/exe", buff, sizeof(buff)-1);
+    if (len != -1) {
+        buff[len] = '\0';
+        std::string path(buff);
+        return path.substr(0, path.find_last_of('/'));
+    }
+    return "";
+}
 
-    std::string local_assets = current + "/assets/";
+std::string get_assets_path() {
+    std::string exe_path = get_self_path();
+    std::string local_assets = exe_path + "/assets/";
     if (g_file_test(local_assets.c_str(), G_FILE_TEST_IS_DIR)) {
         return local_assets;
     }
 
-    size_t last_slash = current.find_last_of('/');
-    if (last_slash != std::string::npos) {
-        std::string parent = current.substr(0, last_slash);
-        std::string parent_assets = parent + "/assets/";
-        if (g_file_test(parent_assets.c_str(), G_FILE_TEST_IS_DIR)) {
-            return parent_assets;
-        }
+    std::string parent_assets = exe_path + "/../assets/";
+    if (g_file_test(parent_assets.c_str(), G_FILE_TEST_IS_DIR)) {
+        return parent_assets;
     }
-    return local_assets;
+    
+    return local_assets; 
 }
 
 std::string get_user_data_dir() {
@@ -1136,9 +1140,7 @@ static gboolean update_home_stats(gpointer data) {
     return TRUE; 
 }
 
-// --- Main ---
 
-// Forward declare init_security as it was defined higher up based on OS
 void init_security();
 
 int main(int argc, char** argv) {
@@ -1153,8 +1155,8 @@ int main(int argc, char** argv) {
     webkit_cookie_manager_set_persistent_storage(webkit_web_context_get_cookie_manager(global_context), (data+"/cookies.sqlite").c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 
     init_security(); // Auto-unlocks using OS Keyring
-    create_window(global_context);
     load_data();
+    create_window(global_context);
 
     g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
     g_timeout_add(1000, update_home_stats, NULL);
