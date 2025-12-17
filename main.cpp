@@ -426,21 +426,53 @@ void load_data() {
 }
 
 void refresh_bookmarks_bar(GtkWidget* bar) {
-    GList *children, *iter;
-    children = gtk_container_get_children(GTK_CONTAINER(bar));
-    for(iter = children; iter != NULL; iter = g_list_next(iter))
+    GList *children = gtk_container_get_children(GTK_CONTAINER(bar));
+    for(GList* iter = children; iter != NULL; iter = g_list_next(iter))
         gtk_widget_destroy(GTK_WIDGET(iter->data));
     g_list_free(children);
 
-    for (const auto& b : bookmarks_list) {
-        GtkWidget* btn = gtk_button_new_with_label(b.title.c_str());
+    for (size_t i = 0; i < bookmarks_list.size(); ++i) {
+        GtkWidget* btn = gtk_button_new_with_label(bookmarks_list[i].title.c_str());
         gtk_style_context_add_class(gtk_widget_get_style_context(btn), "bookmark-item");
         
+        // Left click to open
         g_signal_connect(btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer url_ptr){
             std::string* u = (std::string*)url_ptr;
             WebKitWebView* v = get_active_webview(global_window);
             if(v) webkit_web_view_load_uri(v, u->c_str());
-        }), new std::string(b.url));
+            delete u;
+        }), new std::string(bookmarks_list[i].url));
+
+        // Right click to manage
+        g_signal_connect(btn, "button-press-event", G_CALLBACK(+[](GtkWidget* widget, GdkEventButton* event, gpointer idx_ptr) -> gboolean {
+            if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
+                int index = GPOINTER_TO_INT(idx_ptr);
+                
+                GtkWidget* menu = gtk_menu_new();
+                GtkWidget* del_item = gtk_menu_item_new_with_label("Delete Bookmark");
+                
+                g_signal_connect(del_item, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer data){
+                    int idx = GPOINTER_TO_INT(data);
+                    bookmarks_list.erase(bookmarks_list.begin() + idx);
+                    save_bookmarks_to_disk();
+                    
+                    // Refresh all open bookmark bars
+                    GtkNotebook* nb = get_notebook(global_window);
+                    int pages = gtk_notebook_get_n_pages(nb);
+                    for(int i=0; i<pages; i++){
+                        GtkWidget* pb = gtk_notebook_get_nth_page(nb, i);
+                        GtkWidget* bb = (GtkWidget*)g_object_get_data(G_OBJECT(pb), "bookmarks_bar");
+                        if(bb) refresh_bookmarks_bar(bb);
+                    }
+                }), GINT_TO_POINTER(index));
+
+                gtk_menu_shell_append(GTK_MENU_SHELL(menu), del_item);
+                gtk_widget_show_all(menu);
+                gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
+                return TRUE;
+            }
+            return FALSE;
+        }), GINT_TO_POINTER(i));
 
         gtk_box_pack_start(GTK_BOX(bar), btn, FALSE, FALSE, 2);
     }
@@ -1036,6 +1068,16 @@ void update_url_bar(WebKitWebView* web_view, GtkEntry* entry) {
         const char* title = webkit_web_view_get_title(web_view);
         add_history_item(u, title ? std::string(title) : "");
 
+        // Check if current URI is bookmarked
+        auto it = std::find_if(bookmarks_list.begin(), bookmarks_list.end(), 
+            [&](const BookmarkItem& b){ return b.url == u; });
+
+        if (it != bookmarks_list.end()) {
+            gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_SECONDARY, "starred-symbolic");
+        } else {
+            gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_SECONDARY, "non-starred-symbolic");
+        }
+
     } else {
         // Internal Page
         gtk_entry_set_text(entry, ""); 
@@ -1226,7 +1268,7 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url_entry);
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), NULL);
 
-    // Star Button Logic
+    // Star Button Logic 
     gtk_entry_set_icon_from_icon_name(GTK_ENTRY(url_entry), GTK_ENTRY_ICON_SECONDARY, "non-starred-symbolic");
     g_signal_connect(url_entry, "icon-press", G_CALLBACK(+[](GtkEntry* entry, GtkEntryIconPosition pos, GdkEvent* ev, gpointer v_ptr){
         if (pos == GTK_ENTRY_ICON_SECONDARY) {
@@ -1235,12 +1277,18 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
             const char* title = webkit_web_view_get_title(view);
             if(url.empty()) return;
 
+            auto it = std::find_if(bookmarks_list.begin(), bookmarks_list.end(), 
+                [&](const BookmarkItem& b){ return b.url == url; });
+            
+            if (it != bookmarks_list.end()) {
+                return; 
+            }
+
             bookmarks_list.push_back({ title ? title : url, url });
             save_bookmarks_to_disk();
             
             gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_SECONDARY, "starred-symbolic");
             
-            // Refresh bar in current tab
             GtkWidget* p_box = (GtkWidget*)g_object_get_data(G_OBJECT(view), "page_box");
             GtkWidget* b_bar = (GtkWidget*)g_object_get_data(G_OBJECT(p_box), "bookmarks_bar");
             refresh_bookmarks_bar(b_bar);
