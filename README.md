@@ -69,5 +69,6 @@ Choose the file format that matches your Linux distribution.
 ### Prerequisites (Arch Linux)
 ```bash
 sudo pacman -S base-devel cmake gtk3 webkit2gtk libsoup openssl
+```
 
 *Note: I have no idea what Im doing, this probably will and does have many issues*
