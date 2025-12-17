@@ -10,11 +10,88 @@
 #include <algorithm>
 #include <ctime>
 
+#include <openssl/evp.h>
+#include <openssl/aes.h>
+#include <openssl/rand.h>
+#include <openssl/sha.h>
+#include <iomanip> 
+
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <sys/sysinfo.h>
 #endif
+
+struct SecurityContext {
+    unsigned char salt[32];
+    unsigned char iv[16];
+    unsigned char key[32];
+    bool unlocked = false;
+};
+
+SecurityContext global_security;
+
+std::string get_user_data_dir();
+std::string encrypt_string(const std::string& plain);
+std::string decrypt_string(const std::string& hex_cipher);
+
+bool init_security(const std::string& master_pass) {
+    std::string vault_path = get_user_data_dir() + "vault.bin";
+    
+    // Check if vault exists
+    if (!g_file_test(vault_path.c_str(), G_FILE_TEST_EXISTS)) {
+        // --- FIRST RUN: SETUP ---
+        // 1. Generate Random Salt & IV
+        RAND_bytes(global_security.salt, 32);
+        RAND_bytes(global_security.iv, 16);
+        
+        // 2. Derive Key from Password + Salt
+        PKCS5_PBKDF2_HMAC(master_pass.c_str(), master_pass.length(),
+                          global_security.salt, 32,
+                          100000, EVP_sha256(), // 100k iterations (Standard)
+                          32, global_security.key);
+
+        // 3. Create a "Verifier" (Hash of the key) to check password correctness later
+        unsigned char verifier[32];
+        SHA256(global_security.key, 32, verifier);
+
+        // 4. Save Salt, IV, and Verifier to disk
+        std::ofstream out(vault_path, std::ios::binary);
+        out.write((char*)global_security.salt, 32);
+        out.write((char*)global_security.iv, 16);
+        out.write((char*)verifier, 32);
+        out.close();
+        
+        global_security.unlocked = true;
+        return true;
+    } else {
+        // --- SUBSEQUENT RUNS: UNLOCK ---
+        std::ifstream in(vault_path, std::ios::binary);
+        unsigned char stored_verifier[32];
+        
+        // 1. Load Salt & IV
+        in.read((char*)global_security.salt, 32);
+        in.read((char*)global_security.iv, 16);
+        in.read((char*)stored_verifier, 32);
+        
+        // 2. Derive Key using input password and LOADED salt
+        PKCS5_PBKDF2_HMAC(master_pass.c_str(), master_pass.length(),
+                          global_security.salt, 32,
+                          100000, EVP_sha256(),
+                          32, global_security.key);
+                          
+        // 3. Check if Key matches Verifier
+        unsigned char computed_verifier[32];
+        SHA256(global_security.key, 32, computed_verifier);
+        
+        if (memcmp(stored_verifier, computed_verifier, 32) == 0) {
+            global_security.unlocked = true;
+            return true;
+        } else {
+            return false; // Wrong password
+        }
+    }
+}
 
 // --- Debug & Globals ---
 #define LOG(msg) std::cout << "[DEBUG] " << msg << std::endl
@@ -62,6 +139,8 @@ std::vector<std::string> search_history;
 std::vector<DownloadItem> downloads_list;
 std::vector<PassItem> saved_passwords;
 
+std::string global_master_password = "";
+
 // --- Forward Declarations ---
 void create_window(WebKitWebContext* ctx);
 GtkNotebook* get_notebook(GtkWidget* win);
@@ -69,6 +148,50 @@ void run_js(WebKitWebView* view, const std::string& script);
 GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context);
 WebKitWebView* get_active_webview(GtkWidget* win);
 
+void prompt_for_master_password() {
+    
+    bool authenticated = false;
+    
+    while (!authenticated) {
+        GtkWidget *dialog = gtk_dialog_new_with_buttons("Zyro Secure Vault", 
+                                                        GTK_WINDOW(global_window), 
+                                                        GTK_DIALOG_MODAL, 
+                                                        "Unlock", GTK_RESPONSE_ACCEPT,
+                                                        "Cancel", GTK_RESPONSE_REJECT, 
+                                                        NULL);
+
+        GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+        GtkWidget *label = gtk_label_new("Enter Master Password:");
+        GtkWidget *entry = gtk_entry_new();
+        gtk_entry_set_visibility(GTK_ENTRY(entry), FALSE);
+        gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+
+        gtk_container_add(GTK_CONTAINER(content_area), label);
+        gtk_container_add(GTK_CONTAINER(content_area), entry);
+        gtk_widget_show_all(dialog);
+
+        int result = gtk_dialog_run(GTK_DIALOG(dialog));
+        std::string input_pass = gtk_entry_get_text(GTK_ENTRY(entry));
+        gtk_widget_destroy(dialog); // Destroy UI immediately
+
+        if (result == GTK_RESPONSE_ACCEPT) {
+            if (init_security(input_pass)) {
+                authenticated = true; // Success!
+            } else {
+                // Show Error Dialog
+                GtkWidget *err = gtk_message_dialog_new(GTK_WINDOW(global_window),
+                                            GTK_DIALOG_DESTROY_WITH_PARENT,
+                                            GTK_MESSAGE_ERROR,
+                                            GTK_BUTTONS_CLOSE,
+                                            "Incorrect Password. Decryption Failed.");
+                gtk_dialog_run(GTK_DIALOG(err));
+                gtk_widget_destroy(err);
+            }
+        } else {
+            exit(0); // If they cancel, kill the browser. No access without password.
+        }
+    }
+}
 // --- Path & Time Helpers ---
 std::string get_assets_path() {
     char* cwd = g_get_current_dir();
@@ -128,9 +251,12 @@ void save_searches_to_disk() {
 }
 
 void save_passwords_to_disk() {
+    if (!global_security.unlocked) return;
+
     std::ofstream f(get_user_data_dir() + "passwords.txt");
     for (const auto& p : saved_passwords) {
-        f << p.site << "|" << p.user << "|" << p.pass << "\n";
+        std::string encrypted_pass = encrypt_string(p.pass);
+        f << p.site << "|" << p.user << "|" << encrypted_pass << "\n";
     }
 }
 
@@ -169,6 +295,20 @@ void load_data() {
         }
     }
 
+    std::ifstream p_file(conf_dir + "passwords.txt");
+    while (std::getline(p_file, line)) {
+        std::stringstream ss(line);
+        std::string segment;
+        std::vector<std::string> seglist;
+        while(std::getline(ss, segment, '|')) {
+            seglist.push_back(segment);
+        }
+        
+        if(seglist.size() >= 3) {
+            std::string raw_pass = decrypt_string(seglist[2]); 
+            saved_passwords.push_back({ seglist[0], seglist[1], raw_pass });
+        }
+    }
     // 4. Setup Paths
     if(!soup_session) soup_session = soup_session_new();
     std::string base = get_assets_path();
@@ -557,6 +697,43 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     }
 }
 
+void try_autofill(WebKitWebView* view, const char* uri) {
+    if (!global_security.unlocked) return;
+    std::string current_url(uri);
+
+    // Find matching site in our DB
+    for (const auto& item : saved_passwords) {
+        // Simple string match. Real browsers use domain extraction.
+        if (current_url.find(item.site) != std::string::npos) {
+            
+            // Construct JS to fill forms
+            // We dispatch 'input' events so React/Vue apps detect the change
+            std::string script = 
+                "var u = '" + item.user + "';"
+                "var p = '" + item.pass + "';"
+                "var passInputs = document.querySelectorAll('input[type=\"password\"]');"
+                "if (passInputs.length > 0) {"
+                "  passInputs[0].value = p;"
+                "  passInputs[0].dispatchEvent(new Event('input', { bubbles: true }));"
+                "  passInputs[0].dispatchEvent(new Event('change', { bubbles: true }));"
+                "  var inputs = document.querySelectorAll('input[type=\"text\"], input[type=\"email\"]');"
+                "  for (var i = 0; i < inputs.length; i++) {"
+                "    if (inputs[i].compareDocumentPosition(passInputs[0]) & Node.DOCUMENT_POSITION_FOLLOWING) {"
+                "       inputs[i].value = u;"
+                "       inputs[i].dispatchEvent(new Event('input', { bubbles: true }));"
+                "       inputs[i].dispatchEvent(new Event('change', { bubbles: true }));"
+                "       break;"
+                "    }"
+                "  }"
+                "}";
+            
+            run_js(view, script);
+            LOG("Autofilled credentials for: " << item.site);
+            return; // Found one, stop searching
+        }
+    }
+}
+
 // --- UI Helpers ---
 GtkNotebook* get_notebook(GtkWidget* win) {
     return GTK_NOTEBOOK(g_object_get_data(G_OBJECT(win), "notebook"));
@@ -636,6 +813,12 @@ void on_load_changed(WebKitWebView* web_view, WebKitLoadEvent load_event, gpoint
             } else {
                 gtk_entry_set_text(entry, ""); // Clear for internal pages
             }
+        }
+    }
+    if (load_event == WEBKIT_LOAD_FINISHED) {
+        const char* uri = webkit_web_view_get_uri(web_view);
+        if (uri) {
+            try_autofill(web_view, uri);
         }
     }
 }
@@ -918,9 +1101,80 @@ static gboolean update_home_stats(gpointer data) {
     return TRUE; 
 }
 
+//TEMPORARY
+const unsigned char FIXED_SALT[] = "ZyroBrowserSalt123";
+
+void derive_key_iv(const std::string& password, unsigned char* key, unsigned char* iv) {
+    PKCS5_PBKDF2_HMAC(password.c_str(), password.length(),
+                      FIXED_SALT, sizeof(FIXED_SALT)-1,
+                      10000, EVP_sha256(),
+                      32, key);
+    
+    PKCS5_PBKDF2_HMAC(password.c_str(), password.length(),
+                      FIXED_SALT, sizeof(FIXED_SALT)-1,
+                      10000, EVP_sha256(),
+                      16, iv);
+}
+
+std::string hex_encode(const unsigned char* data, int len) {
+    std::stringstream ss;
+    for (int i = 0; i < len; ++i) ss << std::hex << std::setw(2) << std::setfill('0') << (int)data[i];
+    return ss.str();
+}
+
+std::vector<unsigned char> hex_decode(const std::string& input) {
+    std::vector<unsigned char> output;
+    for (size_t i = 0; i < input.length(); i += 2) {
+        std::string byteString = input.substr(i, 2);
+        output.push_back((unsigned char)strtol(byteString.c_str(), NULL, 16));
+    }
+    return output;
+}
+
+std::string encrypt_string(const std::string& plain) {
+    if (!global_security.unlocked) return "";
+
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, global_security.key, global_security.iv);
+
+    std::vector<unsigned char> ciphertext(plain.length() + AES_BLOCK_SIZE);
+    int len, ciphertext_len;
+
+    EVP_EncryptUpdate(ctx, ciphertext.data(), &len, (unsigned char*)plain.c_str(), plain.length());
+    ciphertext_len = len;
+
+    EVP_EncryptFinal_ex(ctx, ciphertext.data() + len, &len);
+    ciphertext_len += len;
+    EVP_CIPHER_CTX_free(ctx);
+
+    return hex_encode(ciphertext.data(), ciphertext_len);
+}
+
+std::string decrypt_string(const std::string& hex_cipher) {
+    if (!global_security.unlocked) return "";
+    
+    std::vector<unsigned char> ciphertext = hex_decode(hex_cipher);
+    std::vector<unsigned char> plaintext(ciphertext.size() + AES_BLOCK_SIZE);
+    
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, global_security.key, global_security.iv);
+
+    int len, plaintext_len;
+    EVP_DecryptUpdate(ctx, plaintext.data(), &len, ciphertext.data(), ciphertext.size());
+    plaintext_len = len;
+
+    if (EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len) <= 0) {
+        EVP_CIPHER_CTX_free(ctx);
+        return "ERR"; 
+    }
+    
+    EVP_CIPHER_CTX_free(ctx);
+    plaintext_len += len;
+    return std::string((char*)plaintext.data(), plaintext_len);
+}
+
 int main(int argc, char** argv) {
     gtk_init(&argc, &argv);
-    load_data();
     
     std::string user_dir = get_user_data_dir();
     std::string cache = user_dir + "cache";
@@ -930,9 +1184,14 @@ int main(int argc, char** argv) {
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
     webkit_cookie_manager_set_persistent_storage(webkit_web_context_get_cookie_manager(global_context), (data+"/cookies.sqlite").c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 
-    g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
+    
     
     create_window(global_context); 
+    prompt_for_master_password();
+    load_data();
+
+    g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
+
     g_timeout_add(1000, update_home_stats, NULL);
     gtk_main();
     return 0;
