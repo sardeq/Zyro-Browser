@@ -162,3 +162,9 @@ entry image.secondary {
     background-color: #3c4043;
     color: #8ab4f8; /* Active color */
 }
+
+
+progressbar.error progress {
+    background-color: #e06c75;
+    border-color: #e06c75;
+}

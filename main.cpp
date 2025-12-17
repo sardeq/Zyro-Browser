@@ -606,8 +606,10 @@ static void on_download_finished(WebKitDownload* download, gpointer user_data) {
     guint64 id = GPOINTER_TO_UINT(user_data);
     int idx = find_download_index(id);
     if(idx != -1) {
-        downloads_list[idx].progress = 100.0;
-        downloads_list[idx].status = "Completed";
+        if (downloads_list[idx].status != "Cancelled" && downloads_list[idx].status != "Failed") {
+            downloads_list[idx].progress = 100.0;
+            downloads_list[idx].status = "Completed";
+        }
     }
 }
 
@@ -1360,7 +1362,6 @@ void update_downloads_popup() {
         gtk_widget_set_opacity(status, 0.7);
         gtk_box_pack_start(GTK_BOX(status_box), status, FALSE, FALSE, 0);
 
-        // Add Stop Button if downloading
         if (item.status == "Downloading") {
             GtkWidget* stop_btn = gtk_button_new_from_icon_name("process-stop-symbolic", GTK_ICON_SIZE_MENU);
             gtk_widget_set_tooltip_text(stop_btn, "Stop Download");
@@ -1378,6 +1379,10 @@ void update_downloads_popup() {
 
         GtkWidget* pb = gtk_progress_bar_new();
         gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(pb), item.progress / 100.0);
+        
+        if (item.status == "Cancelled" || item.status == "Failed") {
+            gtk_style_context_add_class(gtk_widget_get_style_context(pb), "error");
+        }
         
         gtk_box_pack_start(GTK_BOX(row), top, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(row), pb, FALSE, FALSE, 0);
@@ -1417,7 +1422,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
     GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu"); 
 
-    // --- Downloads Button & Popover (Fixed Crash) ---
     GtkWidget* b_downloads = gtk_toggle_button_new(); 
     GtkWidget* dl_icon = gtk_image_new_from_icon_name("folder-download-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_container_add(GTK_CONTAINER(b_downloads), dl_icon);
@@ -1435,7 +1439,14 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_label_set_xalign(GTK_LABEL(pop_header), 0);
     
     GtkWidget* list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget* full_page_link = gtk_link_button_new_with_label(settings.downloads_url.c_str(), "View All Downloads");
+    GtkWidget* full_page_link = gtk_button_new_with_label("View All Downloads");
+    gtk_button_set_relief(GTK_BUTTON(full_page_link), GTK_RELIEF_NONE);
+    g_signal_connect(full_page_link, "clicked", G_CALLBACK(+[](GtkButton*, gpointer){
+        if(global_window && global_context) {
+            create_new_tab(global_window, settings.downloads_url, global_context);
+            if(global_downloads_popover) gtk_popover_popdown(GTK_POPOVER(global_downloads_popover));
+        }
+    }), NULL);
 
     gtk_box_pack_start(GTK_BOX(pop_box), pop_header, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(pop_box), list_box, FALSE, FALSE, 0);
@@ -1445,7 +1456,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_container_add(GTK_CONTAINER(dl_popover), pop_box);
     gtk_widget_show_all(pop_box);
 
-    // Manual Toggle Logic (Replaces invalid MenuButton cast)
     g_signal_connect(b_downloads, "toggled", G_CALLBACK(+[](GtkToggleButton* btn, gpointer pop){
         if (gtk_toggle_button_get_active(btn)) {
             update_downloads_popup(); 
@@ -1462,6 +1472,14 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     global_downloads_btn = b_downloads;
     global_downloads_popover = dl_popover;
     global_downloads_list_box = list_box;
+
+    g_signal_connect(dl_popover, "destroy", G_CALLBACK(+[](GtkWidget* widget, gpointer){
+        if (global_downloads_popover == widget) {
+            global_downloads_popover = nullptr;
+            global_downloads_list_box = nullptr;
+            global_downloads_btn = nullptr;
+        }
+    }), NULL);
 
     GtkWidget* url_entry = gtk_entry_new();
     GtkEntryCompletion* completion = gtk_entry_completion_new();
