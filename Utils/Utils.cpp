@@ -1,12 +1,24 @@
 #include "Utils.h"
-#include <unistd.h>
-#include <sys/sysinfo.h>
 #include <iostream>
 #include <ctime>
 #include <fstream>
 #include <sstream>
 
+#ifdef _WIN32
+    #include <windows.h>
+    #include <sys/types.h>
+#else
+    #include <unistd.h>
+    #include <sys/sysinfo.h>
+#endif
+
 std::string get_self_path() {
+#ifdef _WIN32
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(NULL, buffer, MAX_PATH);
+    std::string::size_type pos = std::string(buffer).find_last_of("\\/");
+    return std::string(buffer).substr(0, pos);
+#else
     char buff[4096];
     ssize_t len = readlink("/proc/self/exe", buff, sizeof(buff)-1);
     if (len != -1) {
@@ -15,6 +27,7 @@ std::string get_self_path() {
         return path.substr(0, path.find_last_of('/'));
     }
     return "";
+#endif
 }
 
 std::string get_assets_path() {
