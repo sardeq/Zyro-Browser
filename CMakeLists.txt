@@ -19,12 +19,18 @@ endif()
 
 link_directories(${GTK3_LIBRARY_DIRS} ${WEBKIT_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS} ${OPENSSL_LIBRARY_DIRS})
 
-add_executable(ZyroBrowser main.cpp)
+add_executable(ZyroBrowser 
+    main.cpp 
+    Globals.cpp 
+    Utils.cpp 
+    Security.cpp 
+    Storage.cpp 
+    Downloads.cpp 
+    Browser.cpp
+)
 
-# Link Libraries
 if(UNIX AND NOT APPLE)
     target_link_libraries(ZyroBrowser ${GTK3_LIBRARIES} ${WEBKIT_LIBRARIES} ${SOUP_LIBRARIES} ${OPENSSL_LIBRARIES} ${LIBSECRET_LIBRARIES} crypto)
 elseif(WIN32)
-    # Link Crypt32 for DPAPI on Windows
     target_link_libraries(ZyroBrowser ${GTK3_LIBRARIES} ${WEBKIT_LIBRARIES} ${SOUP_LIBRARIES} ${OPENSSL_LIBRARIES} crypto Crypt32)
 endif()
