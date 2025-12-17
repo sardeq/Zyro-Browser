@@ -37,25 +37,39 @@
             displayFiltered(allBookmarks);
         }
 
-        function displayFiltered(data) {
+function displayFiltered(data) {
             const list = document.getElementById('list');
             list.innerHTML = '';
             if(data.length === 0) list.innerHTML = '<p>No matching bookmarks found.</p>';
 
             data.forEach((b) => {
-                // Find original index for deletion
                 const originalIndex = allBookmarks.indexOf(b);
                 const div = document.createElement('div');
                 div.className = 'bookmark-item';
                 div.innerHTML = `
                     <div class="info" onclick="openUrl('${b.url}')">
-                        <span class="title">${b.title}</span>
+                        <span class="title" id="title-${originalIndex}">${b.title}</span>
                         <span class="url">${b.url}</span>
                     </div>
-                    <button class="del-btn" onclick="deleteBookmark(${originalIndex})">Remove</button>
+                    <div>
+                        <button onclick="renameBookmark(${originalIndex}, '${b.title}')" style="background:var(--accent); color:black; margin-right:5px;">Rename</button>
+                        <button class="del-btn" onclick="deleteBookmark(${originalIndex})">Remove</button>
+                    </div>
                 `;
                 list.appendChild(div);
             });
+        }
+
+        function renameBookmark(idx, oldTitle) {
+            const newTitle = prompt("Enter new title:", oldTitle);
+            if (newTitle && newTitle !== oldTitle) {
+                window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ 
+                    type: 'rename_bookmark', 
+                    index: idx, 
+                    new_title: newTitle 
+                }));
+                setTimeout(refresh, 50);
+            }
         }
 
         function filterBookmarks() {

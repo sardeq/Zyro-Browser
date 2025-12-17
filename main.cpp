@@ -443,29 +443,61 @@ void refresh_bookmarks_bar(GtkWidget* bar) {
             delete u;
         }), new std::string(bookmarks_list[i].url));
 
-        // Right click to manage
         g_signal_connect(btn, "button-press-event", G_CALLBACK(+[](GtkWidget* widget, GdkEventButton* event, gpointer idx_ptr) -> gboolean {
             if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
                 int index = GPOINTER_TO_INT(idx_ptr);
                 
                 GtkWidget* menu = gtk_menu_new();
+                GtkWidget* rename_item = gtk_menu_item_new_with_label("Rename");
                 GtkWidget* del_item = gtk_menu_item_new_with_label("Delete Bookmark");
                 
+                // --- RENAME LOGIC ---
+                g_signal_connect(rename_item, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer data){
+                    int idx = GPOINTER_TO_INT(data);
+                    
+                    GtkWidget* dialog = gtk_dialog_new_with_buttons("Rename Bookmark",
+                        GTK_WINDOW(global_window), GTK_DIALOG_MODAL,
+                        "_Cancel", GTK_RESPONSE_CANCEL, "_Save", GTK_RESPONSE_OK, NULL);
+                    
+                    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+                    GtkWidget* entry = gtk_entry_new();
+                    gtk_entry_set_text(GTK_ENTRY(entry), bookmarks_list[idx].title.c_str());
+                    gtk_container_add(GTK_CONTAINER(content), entry);
+                    gtk_widget_show_all(dialog);
+
+                    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_OK) {
+                        const char* text = gtk_entry_get_text(GTK_ENTRY(entry));
+                        if (text && strlen(text) > 0) {
+                            bookmarks_list[idx].title = text;
+                            save_bookmarks_to_disk();
+                            
+                            // Refresh all open bookmark bars
+                            GtkNotebook* nb = get_notebook(global_window);
+                            for(int i=0; i<gtk_notebook_get_n_pages(nb); i++){
+                                GtkWidget* pb = gtk_notebook_get_nth_page(nb, i);
+                                GtkWidget* bb = (GtkWidget*)g_object_get_data(G_OBJECT(pb), "bookmarks_bar");
+                                if(bb) refresh_bookmarks_bar(bb);
+                            }
+                        }
+                    }
+                    gtk_widget_destroy(dialog);
+                }), GINT_TO_POINTER(index));
+
+                // --- DELETE LOGIC ---
                 g_signal_connect(del_item, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer data){
                     int idx = GPOINTER_TO_INT(data);
                     bookmarks_list.erase(bookmarks_list.begin() + idx);
                     save_bookmarks_to_disk();
                     
-                    // Refresh all open bookmark bars
                     GtkNotebook* nb = get_notebook(global_window);
-                    int pages = gtk_notebook_get_n_pages(nb);
-                    for(int i=0; i<pages; i++){
+                    for(int i=0; i<gtk_notebook_get_n_pages(nb); i++){
                         GtkWidget* pb = gtk_notebook_get_nth_page(nb, i);
                         GtkWidget* bb = (GtkWidget*)g_object_get_data(G_OBJECT(pb), "bookmarks_bar");
                         if(bb) refresh_bookmarks_bar(bb);
                     }
                 }), GINT_TO_POINTER(index));
 
+                gtk_menu_shell_append(GTK_MENU_SHELL(menu), rename_item);
                 gtk_menu_shell_append(GTK_MENU_SHELL(menu), del_item);
                 gtk_widget_show_all(menu);
                 gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
@@ -789,6 +821,14 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         int idx = get_json_int("index");
         if(idx >= 0 && idx < bookmarks_list.size()) {
             bookmarks_list.erase(bookmarks_list.begin() + idx);
+            save_bookmarks_to_disk();
+        }
+    }
+    else if (type == "rename_bookmark") {
+        int idx = get_json_int("index");
+        std::string new_title = get_json_val("new_title");
+        if(idx >= 0 && idx < bookmarks_list.size() && !new_title.empty()) {
+            bookmarks_list[idx].title = new_title;
             save_bookmarks_to_disk();
         }
     }
