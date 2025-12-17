@@ -202,6 +202,12 @@ struct BookmarkItem {
 std::vector<BookmarkItem> bookmarks_list;
 GtkWidget* global_bookmarks_bar = nullptr;
 
+struct ShortcutItem {
+    std::string name;
+    std::string url;
+};
+std::vector<ShortcutItem> shortcuts_list;
+
 // --- Global State ---
 WebKitWebContext* global_context = nullptr; 
 GtkWidget* global_window = nullptr;
@@ -356,6 +362,13 @@ void save_bookmarks_to_disk() {
     }
 }
 
+void save_shortcuts_to_disk() {
+    std::ofstream f(get_user_data_dir() + "shortcuts.txt");
+    for (const auto& s : shortcuts_list) {
+        f << s.name << "|" << s.url << "\n";
+    }
+}
+
 void load_data() {
     std::string conf_dir = get_user_data_dir();
     
@@ -410,6 +423,14 @@ void load_data() {
         size_t sep = line.find('|');
         if (sep != std::string::npos) {
             bookmarks_list.push_back({ line.substr(sep + 1), line.substr(0, sep) });
+        }
+    }
+
+    std::ifstream shortcut_file(conf_dir + "shortcuts.txt"); 
+    while (std::getline(shortcut_file, line)) {
+        size_t sep = line.find('|');
+        if (sep != std::string::npos) {
+            shortcuts_list.push_back({ line.substr(0, sep), line.substr(sep + 1) });
         }
     }
 
@@ -830,6 +851,34 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         if(idx >= 0 && idx < bookmarks_list.size() && !new_title.empty()) {
             bookmarks_list[idx].title = new_title;
             save_bookmarks_to_disk();
+        }
+    }
+    else if (type == "get_shortcuts") {
+        std::stringstream ss; ss << "[";
+        for(size_t i=0; i<shortcuts_list.size(); ++i) {
+            ss << "{ \"name\": \"" << shortcuts_list[i].name << "\", \"url\": \"" << shortcuts_list[i].url << "\" }";
+            if(i < shortcuts_list.size()-1) ss << ",";
+        }
+        ss << "]";
+        run_js(view, "renderShortcuts(" + ss.str() + ");");
+    }
+    else if (type == "add_shortcut") {
+        shortcuts_list.push_back({ get_json_val("name"), get_json_val("url") });
+        save_shortcuts_to_disk();
+    }
+    else if (type == "delete_shortcut") {
+        int idx = get_json_int("index");
+        if(idx >= 0 && idx < (int)shortcuts_list.size()) {
+            shortcuts_list.erase(shortcuts_list.begin() + idx);
+            save_shortcuts_to_disk();
+        }
+    }
+    else if (type == "edit_shortcut") {
+        int idx = get_json_int("index");
+        if(idx >= 0 && idx < (int)shortcuts_list.size()) {
+            shortcuts_list[idx].name = get_json_val("name");
+            shortcuts_list[idx].url = get_json_val("url");
+            save_shortcuts_to_disk();
         }
     }
     else if (type == "get_theme") {
@@ -1461,6 +1510,16 @@ void create_window(WebKitWebContext* ctx) {
     gtk_notebook_set_show_border(GTK_NOTEBOOK(nb), FALSE);
     gtk_notebook_set_scrollable(GTK_NOTEBOOK(nb), TRUE);
     g_object_set_data(G_OBJECT(win), "notebook", nb);
+
+    GtkWidget* add_tab_btn = gtk_button_new_from_icon_name("list-add-symbolic", GTK_ICON_SIZE_MENU);
+    gtk_widget_set_tooltip_text(add_tab_btn, "New Tab");
+    gtk_widget_show(add_tab_btn);
+
+    gtk_notebook_set_action_widget(GTK_NOTEBOOK(nb), add_tab_btn, GTK_PACK_END);
+
+    g_signal_connect(add_tab_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer win){
+        create_new_tab(GTK_WIDGET(win), settings.home_url, global_context);
+    }), win);
 
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(win), box);
