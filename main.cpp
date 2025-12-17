@@ -24,6 +24,9 @@ struct AppSettings {
     std::string home_url = "file://"; 
     std::string settings_url = "file://";
     std::string history_url = "file://";
+    std::string downloads_url = "file://";
+    std::string passwords_url = "file://"; 
+    std::string about_url = "file://"; 
     std::string search_engine = "https://www.google.com/search?q=";
     std::string suggestion_api = "http://suggestqueries.google.com/complete/search?client=firefox&q=";
     std::string theme = "dark";
@@ -35,6 +38,19 @@ struct HistoryItem {
     std::string time_str;
 };
 
+struct DownloadItem {
+    std::string filename;
+    std::string url;
+    std::string status;
+    double progress;
+};
+
+struct PassItem {
+    std::string site;
+    std::string user;
+    std::string pass;
+};
+
 // --- Global State ---
 WebKitWebContext* global_context = nullptr; 
 GtkWidget* global_window = nullptr;
@@ -43,6 +59,8 @@ SoupSession* soup_session = nullptr;
 // In-memory cache for fast access
 std::vector<HistoryItem> browsing_history;
 std::vector<std::string> search_history;
+std::vector<DownloadItem> downloads_list;
+std::vector<PassItem> saved_passwords;
 
 // --- Forward Declarations ---
 void create_window(WebKitWebContext* ctx);
@@ -109,6 +127,13 @@ void save_searches_to_disk() {
     }
 }
 
+void save_passwords_to_disk() {
+    std::ofstream f(get_user_data_dir() + "passwords.txt");
+    for (const auto& p : saved_passwords) {
+        f << p.site << "|" << p.user << "|" << p.pass << "\n";
+    }
+}
+
 void load_data() {
     std::string conf_dir = get_user_data_dir();
     
@@ -150,6 +175,9 @@ void load_data() {
     settings.home_url = "file://" + base + "home.html";
     settings.settings_url = "file://" + base + "settings.html";
     settings.history_url = "file://" + base + "history.html";
+    settings.downloads_url = "file://" + base + "downloads.html";
+    settings.passwords_url = "file://" + base + "passwords.html";
+    settings.about_url = "file://" + base + "about.html"; 
     
     LOG("Data Loaded. History items: " << browsing_history.size());
 }
@@ -193,6 +221,66 @@ void clear_all_history() {
     search_history.clear();
     save_history_to_disk();
     save_searches_to_disk();
+}
+
+static void on_download_received_data(WebKitDownload* download, guint64 data_length, gpointer user_data) {
+    int* idx_ptr = (int*)user_data;
+    if(*idx_ptr >= 0 && *idx_ptr < downloads_list.size()) {
+        double p = webkit_download_get_estimated_progress(download);
+        downloads_list[*idx_ptr].progress = p * 100.0;
+        downloads_list[*idx_ptr].status = "Downloading";
+    }
+}
+
+static void on_download_finished(WebKitDownload* download, gpointer user_data) {
+    int* idx_ptr = (int*)user_data;
+    if(*idx_ptr >= 0 && *idx_ptr < downloads_list.size()) {
+        downloads_list[*idx_ptr].progress = 100.0;
+        downloads_list[*idx_ptr].status = "Completed";
+    }
+    delete idx_ptr; // Clean up the index pointer
+}
+
+static void on_download_failed(WebKitDownload* download, GError* error, gpointer user_data) {
+    int* idx_ptr = (int*)user_data;
+    if(*idx_ptr >= 0 && *idx_ptr < downloads_list.size()) {
+        downloads_list[*idx_ptr].status = "Failed";
+    }
+    // Don't delete idx_ptr here, finished is called after failed
+}
+
+static gboolean on_decide_destination(WebKitDownload *download, gchar *suggested_filename, gpointer user_data) {
+    // Determine path (Default to user Downloads folder)
+    const char* download_dir = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
+    if (!download_dir) download_dir = g_get_home_dir();
+    
+    std::string filename = suggested_filename ? suggested_filename : "download";
+    std::string full_path = std::string(download_dir) + "/" + filename;
+    std::string file_uri = "file://" + full_path;
+
+    webkit_download_set_destination(download, file_uri.c_str());
+    
+    // Add to our list
+    DownloadItem item;
+    item.filename = filename;
+    item.url = webkit_uri_request_get_uri(webkit_download_get_request(download));
+    item.progress = 0.0;
+    item.status = "Starting...";
+    
+    downloads_list.push_back(item);
+    
+    // Pass the index to signals so they can update the correct item
+    int* idx = new int(downloads_list.size() - 1);
+    
+    g_signal_connect(download, "received-data", G_CALLBACK(on_download_received_data), idx);
+    g_signal_connect(download, "failed", G_CALLBACK(on_download_failed), idx);
+    g_signal_connect(download, "finished", G_CALLBACK(on_download_finished), idx);
+    
+    return TRUE; // We handled the destination decision
+}
+
+static void on_download_started(WebKitWebContext *context, WebKitDownload *download, gpointer user_data) {
+    g_signal_connect(download, "decide-destination", G_CALLBACK(on_decide_destination), NULL);
 }
 
 // --- Suggestion Logic ---
@@ -348,13 +436,20 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     std::string json(json_str);
     g_free(json_str);
 
+    // Helper: Get String
     auto get_json_val = [&](std::string key) -> std::string {
         std::regex re("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
         std::smatch match;
-        if (std::regex_search(json, match, re)) {
-            return match[1].str();
-        }
+        if (std::regex_search(json, match, re)) return match[1].str();
         return "";
+    };
+
+    // Helper: Get Integer (Added this for delete_password)
+    auto get_json_int = [&](std::string key) -> int {
+        std::regex re("\"" + key + "\"\\s*:\\s*([0-9]+)");
+        std::smatch match;
+        if (std::regex_search(json, match, re)) return std::stoi(match[1].str());
+        return -1;
     };
 
     std::string type = get_json_val("type");
@@ -367,24 +462,19 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         webkit_web_view_load_uri(view, url.c_str());
     }
     else if (type == "get_suggestions") {
-        std::string query = get_json_val("query");
-        fetch_suggestions(query, false, view);
+        fetch_suggestions(get_json_val("query"), false, view);
     }
     else if (type == "save_settings") {
         std::string engine = get_json_val("engine");
         std::string theme = get_json_val("theme");
-        
         if (engine.empty()) engine = settings.search_engine;
         if (theme.empty()) theme = settings.theme;
-
         save_settings(engine, theme);
         
-        // Update all tabs immediately
         if(global_window) {
              GtkNotebook* nb = get_notebook(global_window);
              int pages = gtk_notebook_get_n_pages(nb);
              for(int i=0; i<pages; i++) {
-                 // The page is now a VBox [Toolbar, WebView]
                  GtkWidget* page_box = gtk_notebook_get_nth_page(nb, i);
                  GList* children = gtk_container_get_children(GTK_CONTAINER(page_box));
                  if(children && children->next) {
@@ -398,6 +488,45 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     else if (type == "get_theme") {
         run_js(view, "setTheme('" + settings.theme + "');");
     }
+    else if (type == "get_downloads") {
+        std::stringstream ss; ss << "[";
+        for(size_t i=0; i<downloads_list.size(); ++i) {
+            ss << "{ \"filename\": \"" << downloads_list[i].filename << "\", "
+               << "\"url\": \"" << downloads_list[i].url << "\", "
+               << "\"status\": \"" << downloads_list[i].status << "\", "
+               << "\"progress\": " << downloads_list[i].progress << " }";
+            if(i < downloads_list.size()-1) ss << ",";
+        }
+        ss << "]";
+        run_js(view, "renderDownloads('" + ss.str() + "');");
+    }
+    else if (type == "clear_downloads") {
+        downloads_list.clear();
+    }
+    else if (type == "get_passwords") {
+        std::stringstream ss; ss << "[";
+        for(size_t i=0; i<saved_passwords.size(); ++i) {
+            ss << "{ \"site\": \"" << saved_passwords[i].site << "\", "
+               << "\"user\": \"" << saved_passwords[i].user << "\", "
+               << "\"pass\": \"" << saved_passwords[i].pass << "\" }";
+            if(i < saved_passwords.size()-1) ss << ",";
+        }
+        ss << "]";
+        run_js(view, "renderPasswords('" + ss.str() + "');");
+    }
+    else if (type == "save_password") {
+        // FIXED: Using get_json_val instead of get_val
+        saved_passwords.push_back({get_json_val("site"), get_json_val("user"), get_json_val("pass")});
+        save_passwords_to_disk();
+    }
+    else if (type == "delete_password") {
+        // FIXED: Using get_json_int helper
+        int idx = get_json_int("index");
+        if(idx >= 0 && idx < saved_passwords.size()) {
+            saved_passwords.erase(saved_passwords.begin() + idx);
+            save_passwords_to_disk();
+        }
+    }
     else if (type == "get_settings") {
         std::string script = "loadCurrentSettings('" + settings.search_engine + "', '" + settings.theme + "');";
         run_js(view, script);
@@ -408,8 +537,7 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         run_js(view, "showToast('Cache Cleared');"); 
     }
     else if (type == "open_url") {
-        std::string url = get_json_val("url");
-        webkit_web_view_load_uri(view, url.c_str());
+        webkit_web_view_load_uri(view, get_json_val("url").c_str());
     }
     else if (type == "get_history") {
         std::stringstream ss;
@@ -529,7 +657,8 @@ void show_menu(GtkButton* btn, gpointer win) {
     
     GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
-    auto mk_menu_item = [&](const char* label, const char* icon_name, GCallback cb) {
+    // --- Helper 1: Base Creator ---
+    auto create_base_btn = [&](const char* label, const char* icon_name) {
         GtkWidget* btn = gtk_button_new();
         gtk_style_context_add_class(gtk_widget_get_style_context(btn), "menu-item");
         gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
@@ -541,9 +670,26 @@ void show_menu(GtkButton* btn, gpointer win) {
         gtk_box_pack_start(GTK_BOX(box), img, FALSE, FALSE, 10);
         gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(btn), box);
-        
-        if (cb) g_signal_connect(btn, "clicked", cb, win);
         return btn;
+    };
+
+    // --- Helper 2: Action Item (Callbacks) ---
+    auto mk_menu_item = [&](const char* label, const char* icon_name, GCallback cb) {
+        GtkWidget* b = create_base_btn(label, icon_name);
+        if (cb) g_signal_connect(b, "clicked", cb, win);
+        return b;
+    };
+
+    // --- Helper 3: URL Item (Opens new tab) - This replaces the missing mk_item ---
+    auto mk_url_item = [&](const char* label, const char* icon, const std::string& url) {
+        GtkWidget* b = create_base_btn(label, icon);
+        // We pass a new string pointer to the callback, which must delete it
+        g_signal_connect(b, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data){
+            std::string* u = (std::string*)data;
+            create_new_tab(global_window, *u, global_context);
+            delete u; 
+        }), new std::string(url));
+        return b;
     };
 
     auto mk_sep = [&]() {
@@ -552,24 +698,20 @@ void show_menu(GtkButton* btn, gpointer win) {
         return s;
     };
 
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Tab", "tab-new-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){ 
-        create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); 
-    })), FALSE, FALSE, 0);
+    // Menu Construction
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("New Tab", "tab-new-symbolic", settings.home_url), FALSE, FALSE, 0);
     
-    // Note: Incognito needs a forward declaration or move, implemented below
-    // gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Incognito", "user-trash-symbolic", ...), ...);
-
     gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
 
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("History", "document-open-recent-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
-        create_new_tab(GTK_WIDGET(w), settings.history_url, global_context); 
-    })), FALSE, FALSE, 0);
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Settings", "preferences-system-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
-        create_new_tab(GTK_WIDGET(w), settings.settings_url, global_context); 
-    })), FALSE, FALSE, 0);
+    // FIXED: Using mk_url_item here
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Downloads", "folder-download-symbolic", settings.downloads_url), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Passwords", "dialog-password-symbolic", settings.passwords_url), FALSE, FALSE, 0); 
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("History", "document-open-recent-symbolic", settings.history_url), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Settings", "preferences-system-symbolic", settings.settings_url), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("About Zyro", "help-about-symbolic", settings.about_url), FALSE, FALSE, 0); 
 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
+    
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Exit Zyro", "application-exit-symbolic", G_CALLBACK(gtk_main_quit)), FALSE, FALSE, 0);
 
     gtk_widget_show_all(menu_box);
@@ -788,6 +930,8 @@ int main(int argc, char** argv) {
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
     webkit_cookie_manager_set_persistent_storage(webkit_web_context_get_cookie_manager(global_context), (data+"/cookies.sqlite").c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 
+    g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
+    
     create_window(global_context); 
     g_timeout_add(1000, update_home_stats, NULL);
     gtk_main();

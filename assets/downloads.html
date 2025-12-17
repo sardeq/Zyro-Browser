@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Downloads</title>
+    <style>
+        :root { --bg: #1a1b1e; --panel: #202124; --text: #e8eaed; --accent: #8ab4f8; }
+        body.theme-light { --bg: #f1f3f4; --panel: #ffffff; --text: #202124; --accent: #1a73e8; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
+        h1 { border-bottom: 1px solid #333; padding-bottom: 15px; display: flex; justify-content: space-between; }
+        
+        .download-item { background: var(--panel); padding: 15px; margin-bottom: 10px; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; }
+        .file-info { flex: 1; }
+        .filename { font-weight: bold; display: block; }
+        .url { font-size: 0.8em; color: #9aa0a6; }
+        .status { font-size: 0.9em; margin-right: 15px; color: var(--accent); min-width: 80px; text-align: right; }
+        .progress-bar { width: 100px; height: 6px; background: #333; border-radius: 3px; overflow: hidden; margin-right: 15px; }
+        .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.2s; }
+        
+        button { background: #e06c75; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+    </style>
+</head>
+<body class="theme-dark">
+    <h1>Downloads <button style="background:#444" onclick="clearDownloads()">Clear List</button></h1>
+    <div id="list"></div>
+
+    <script>
+        function renderDownloads(jsonStr) {
+            const list = document.getElementById('list');
+            const data = JSON.parse(jsonStr);
+            list.innerHTML = '';
+
+            if(data.length === 0) list.innerHTML = '<p style="text-align:center; color:#666">No downloads yet.</p>';
+
+            data.reverse().forEach(d => {
+                const div = document.createElement('div');
+                div.className = 'download-item';
+                div.innerHTML = `
+                    <div class="file-info">
+                        <span class="filename">${d.filename}</span>
+                        <span class="url">${d.url}</span>
+                    </div>
+                    <div class="status">${d.status}</div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: ${d.progress}%"></div></div>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function clearDownloads() {
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'clear_downloads' }));
+            document.getElementById('list').innerHTML = '';
+        }
+
+        function setTheme(themeName) { document.body.className = 'theme-' + themeName; }
+
+        // Poll for updates every second
+        setInterval(() => {
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_downloads' }));
+        }, 1000);
+
+        window.onload = () => {
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_theme' }));
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_downloads' }));
+        }
+    </script>
+</body>
+</html>
