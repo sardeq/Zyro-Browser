@@ -27,7 +27,7 @@
 // --- Security Context ---
 struct SecurityContext {
     unsigned char key[32]; // The Raw AES-256 Key
-    unsigned char iv[16];  // Initialization Vector (Fixed for simplicity in this demo, usually random per record)
+    unsigned char iv[16];  // Initialization Vector
     bool ready = false;
 };
 
@@ -95,15 +95,12 @@ void init_security() {
         }
     }
     
-    // Generate a static IV for this session (In prod, store IV with data)
-    // For this simple version, we'll derive IV from the key to keep file format simple
     for(int i=0; i<16; i++) global_security.iv[i] = global_security.key[i] ^ 0xAA;
 }
 
 #else
 // --- LINUX (LibSecret) ---
 
-// Define the schema for our password
 const SecretSchema * get_zyro_schema(void) {
     static const SecretSchema schema = {
         "org.freedesktop.Secret.Generic", SECRET_SCHEMA_NONE,
@@ -127,7 +124,6 @@ void init_security() {
     );
 
     if (stored_key_hex != NULL) {
-        // Key Found! Decode hex to binary
         std::vector<unsigned char> raw = hex_decode(std::string(stored_key_hex));
         if (raw.size() == 32) {
             memcpy(global_security.key, raw.data(), 32);
@@ -144,8 +140,8 @@ void init_security() {
         secret_password_store_sync(
             get_zyro_schema(),
             SECRET_COLLECTION_DEFAULT,
-            "Zyro Browser Master Key", // Label
-            hex_key.c_str(),           // Password (our key)
+            "Zyro Browser Master Key", 
+            hex_key.c_str(),           
             NULL, &error,
             "application", "zyro_browser_master_key",
             NULL
@@ -159,7 +155,6 @@ void init_security() {
         }
     }
 
-    // Generate simple IV derived from key
     for(int i=0; i<16; i++) global_security.iv[i] = global_security.key[i] ^ 0xAA;
 }
 #endif
@@ -869,27 +864,114 @@ static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* mode
     return TRUE;
 }
 
+// --- Site Info Helper ---
+
+void show_site_info_popover(GtkEntry* entry, WebKitWebView* view) {
+    const char* uri = webkit_web_view_get_uri(view);
+    bool is_secure = (uri && strncmp(uri, "https://", 8) == 0);
+
+    // Create Popover pointing to the Entry
+    GtkWidget* popover = gtk_popover_new(GTK_WIDGET(entry));
+    gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_BOTTOM);
+    
+    // Attempt to point specifically to the icon area (left side)
+    GdkRectangle rect;
+    gtk_entry_get_icon_area(entry, GTK_ENTRY_ICON_PRIMARY, &rect);
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    g_object_set(box, "margin", 10, NULL);
+
+    // Security Status Row
+    GtkWidget* status_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    const char* icon_name = is_secure ? "channel-secure-symbolic" : "channel-insecure-symbolic";
+    const char* text = is_secure ? "Connection is secure" : "Connection is not secure";
+    
+    gtk_box_pack_start(GTK_BOX(status_box), gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(status_box), gtk_label_new(text), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), status_box, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
+
+    // Cookies (Placeholder)
+    GtkWidget* cookies_btn = gtk_button_new_with_label("Cookies and site data");
+    gtk_button_set_relief(GTK_BUTTON(cookies_btn), GTK_RELIEF_NONE);
+    // Align text to left
+    GtkWidget* cookies_lbl = gtk_bin_get_child(GTK_BIN(cookies_btn));
+    gtk_label_set_xalign(GTK_LABEL(cookies_lbl), 0.0);
+    gtk_box_pack_start(GTK_BOX(box), cookies_btn, FALSE, FALSE, 0);
+
+    // Site Settings (Placeholder)
+    GtkWidget* settings_btn = gtk_button_new_with_label("Site settings");
+    gtk_button_set_relief(GTK_BUTTON(settings_btn), GTK_RELIEF_NONE);
+    GtkWidget* settings_lbl = gtk_bin_get_child(GTK_BIN(settings_btn));
+    gtk_label_set_xalign(GTK_LABEL(settings_lbl), 0.0);
+    gtk_box_pack_start(GTK_BOX(box), settings_btn, FALSE, FALSE, 0);
+
+    gtk_container_add(GTK_CONTAINER(popover), box);
+    gtk_widget_show_all(box);
+    gtk_popover_popup(GTK_POPOVER(popover));
+}
+
+// Callback for Icon Click
+void on_icon_press(GtkEntry *entry, GtkEntryIconPosition icon_pos, GdkEvent *event, gpointer user_data) {
+    if (icon_pos == GTK_ENTRY_ICON_PRIMARY) {
+        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+        show_site_info_popover(entry, view);
+    }
+}
+
 // --- Tab Logic ---
 
-void on_load_changed(WebKitWebView* web_view, WebKitLoadEvent load_event, gpointer user_data) {
-    if (load_event == WEBKIT_LOAD_COMMITTED) {
-        const char* uri = webkit_web_view_get_uri(web_view);
-        GtkEntry* entry = GTK_ENTRY(g_object_get_data(G_OBJECT(web_view), "entry"));
+void update_url_bar(WebKitWebView* web_view, GtkEntry* entry) {
+    const char* uri = webkit_web_view_get_uri(web_view);
+    if (!uri) return;
 
-        if (uri && entry) {
-            std::string u(uri);
-            if(u.find("file://") == std::string::npos) {
-                gtk_entry_set_text(entry, uri);
-                const char* title = webkit_web_view_get_title(web_view);
-                add_history_item(u, title ? std::string(title) : "");
-            } else {
-                gtk_entry_set_text(entry, ""); 
-            }
+    std::string u(uri);
+    
+    if(u.find("file://") == std::string::npos) {
+        // Update URL Text - ALWAYS show full URI
+        // Note: We use the raw URI here to ensure path is visible
+        gtk_entry_set_text(entry, uri); 
+        
+        // Update Lock Icon based on Scheme
+        if(u.find("https://") == 0) {
+            gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_PRIMARY, "channel-secure-symbolic");
+            gtk_entry_set_icon_tooltip_text(entry, GTK_ENTRY_ICON_PRIMARY, "View site information");
+        } else {
+            gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_PRIMARY, "channel-insecure-symbolic");
+            gtk_entry_set_icon_tooltip_text(entry, GTK_ENTRY_ICON_PRIMARY, "Connection is not secure");
         }
+        
+        // Make sure icon is clickable
+        gtk_entry_set_icon_activatable(entry, GTK_ENTRY_ICON_PRIMARY, TRUE);
+
+        // Update History
+        const char* title = webkit_web_view_get_title(web_view);
+        add_history_item(u, title ? std::string(title) : "");
+
+    } else {
+        // Internal Page
+        gtk_entry_set_text(entry, ""); 
+        gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_PRIMARY, "open-menu-symbolic"); 
+        gtk_entry_set_icon_activatable(entry, GTK_ENTRY_ICON_PRIMARY, FALSE);
     }
+}
+
+void on_load_changed(WebKitWebView* web_view, WebKitLoadEvent load_event, gpointer user_data) {
+    GtkEntry* entry = GTK_ENTRY(g_object_get_data(G_OBJECT(web_view), "entry"));
+    if (!entry) return;
+
+    // Update on COMMITTED (Load started receiving data)
+    if (load_event == WEBKIT_LOAD_COMMITTED) {
+        update_url_bar(web_view, entry);
+    }
+    
+    // Update on FINISHED (Load complete - handles final redirects)
     if (load_event == WEBKIT_LOAD_FINISHED) {
         const char* uri = webkit_web_view_get_uri(web_view);
         if (uri) {
+            update_url_bar(web_view, entry); // Ensure final URL is set
             try_autofill(web_view, uri);
         }
     }
@@ -1001,6 +1083,8 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_refresh, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_home, FALSE, FALSE, 0);
+    
+    // Address bar takes up remaining space
     gtk_box_pack_start(GTK_BOX(toolbar), url_entry, TRUE, TRUE, 5);
     gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0);
 
@@ -1024,9 +1108,12 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_reload(WEBKIT_WEB_VIEW(v)); }), view);
     g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_load_uri(WEBKIT_WEB_VIEW(v), settings.home_url.c_str()); }), view);
     
-    g_object_set_data(G_OBJECT(view), "entry", url_entry); 
+    g_object_set_data(G_OBJECT(view), "entry", url_entry);
+
     g_signal_connect(url_entry, "changed", G_CALLBACK(on_url_changed), NULL);
     g_signal_connect(url_entry, "activate", G_CALLBACK(on_url_activate), view);
+    g_signal_connect(url_entry, "icon-press", G_CALLBACK(on_icon_press), view); // Connect Lock Icon Click
+    
     g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url_entry);
     
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), NULL);
