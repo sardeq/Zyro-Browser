@@ -3,36 +3,56 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <vector>
+#include <sstream>
+#include <memory>
+#include <regex>
+#include <algorithm>
+#include <ctime>
+
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <sys/sysinfo.h>
 #endif
-#include <vector>
-#include <sstream>
-#include <memory>
-#include <regex>
 
 // --- Debug & Globals ---
 #define LOG(msg) std::cout << "[DEBUG] " << msg << std::endl
 
+// --- Data Structures ---
 struct AppSettings {
     std::string home_url = "file://"; 
     std::string settings_url = "file://";
+    std::string history_url = "file://";
     std::string search_engine = "https://www.google.com/search?q=";
     std::string suggestion_api = "http://suggestqueries.google.com/complete/search?client=firefox&q=";
     std::string theme = "dark";
 } settings;
 
+struct HistoryItem {
+    std::string title;
+    std::string url;
+    std::string time_str;
+};
+
+// --- Global State ---
 WebKitWebContext* global_context = nullptr; 
 GtkWidget* global_window = nullptr;
-SoupSession* soup_session = nullptr; // For network requests
+SoupSession* soup_session = nullptr; 
 
+// In-memory cache for fast access
+std::vector<HistoryItem> browsing_history;
+std::vector<std::string> search_history;
+
+// --- Forward Declarations ---
 void create_window(WebKitWebContext* ctx);
 GtkNotebook* get_notebook(GtkWidget* win);
 void run_js(WebKitWebView* view, const std::string& script); 
+GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context);
+WebKitWebView* get_active_webview(GtkWidget* win);
+GtkEntry* get_url_bar(GtkWidget* win);
 
-// --- Path Helpers ---
+// --- Path & Time Helpers ---
 std::string get_assets_path() {
     char* cwd = g_get_current_dir();
     std::string current(cwd);
@@ -43,7 +63,7 @@ std::string get_assets_path() {
         return local_assets;
     }
 
-    // 2. Check parent directory (e.g. if running from build/)
+    // Check parent directory (e.g. if running from build/)
     size_t last_slash = current.find_last_of('/');
     if (last_slash != std::string::npos) {
         std::string parent = current.substr(0, last_slash);
@@ -52,104 +72,252 @@ std::string get_assets_path() {
             return parent_assets;
         }
     }
-
-    // Fallback
     return local_assets;
 }
 
-std::string get_config_path() {
+std::string get_user_data_dir() {
     const char* home = g_get_home_dir();
-    return std::string(home) + "/.config/zyro/settings.ini";
+    std::string dir = std::string(home) + "/.config/zyro/";
+    // Ensure directory exists
+    if (g_mkdir_with_parents(dir.c_str(), 0755) == -1) {
+        // Handle error if needed, usually quiet
+    }
+    return dir;
 }
 
-std::vector<std::string> parse_suggestions(const std::string& json) {
+std::string get_current_time_str() {
+    time_t now = time(0);
+    struct tm tstruct;
+    char buf[80];
+    tstruct = *localtime(&now);
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tstruct);
+    return std::string(buf);
+}
+
+// --- File I/O for History & Settings ---
+
+void save_history_to_disk() {
+    std::ofstream f(get_user_data_dir() + "history.txt");
+    for (const auto& i : browsing_history) {
+        // Simple delimiter format: URL|Title|Time
+        f << i.url << "|" << i.title << "|" << i.time_str << "\n";
+    }
+}
+
+void save_searches_to_disk() {
+    std::ofstream f(get_user_data_dir() + "searches.txt");
+    for (const auto& s : search_history) {
+        f << s << "\n";
+    }
+}
+
+void load_data() {
+    std::string conf_dir = get_user_data_dir();
+    
+    // 1. Load Settings
+    GKeyFile* key_file = g_key_file_new();
+    if (g_key_file_load_from_file(key_file, (conf_dir + "settings.ini").c_str(), G_KEY_FILE_NONE, NULL)) {
+        gchar* engine = g_key_file_get_string(key_file, "General", "search_engine", NULL);
+        if (engine) { settings.search_engine = engine; g_free(engine); }
+        
+        gchar* theme = g_key_file_get_string(key_file, "General", "theme", NULL);
+        if (theme) { settings.theme = theme; g_free(theme); }
+    }
+    g_key_file_free(key_file);
+
+    // 2. Load Search History
+    std::ifstream s_file(conf_dir + "searches.txt");
+    std::string line;
+    while (std::getline(s_file, line)) {
+        if (!line.empty()) search_history.push_back(line);
+    }
+
+    // 3. Load Browsing History
+    std::ifstream h_file(conf_dir + "history.txt");
+    while (std::getline(h_file, line)) {
+        size_t p1 = line.find('|');
+        size_t p2 = line.find_last_of('|');
+        if (p1 != std::string::npos && p2 != std::string::npos && p1 != p2) {
+            browsing_history.push_back({
+                line.substr(p1 + 1, p2 - p1 - 1), // Title
+                line.substr(0, p1),               // URL
+                line.substr(p2 + 1)               // Time
+            });
+        }
+    }
+
+    // 4. Setup Paths
+    if(!soup_session) soup_session = soup_session_new();
+    std::string base = get_assets_path();
+    settings.home_url = "file://" + base + "home.html";
+    settings.settings_url = "file://" + base + "settings.html";
+    settings.history_url = "file://" + base + "history.html";
+    
+    LOG("Data Loaded. History items: " << browsing_history.size());
+}
+
+void save_settings(const std::string& engine, const std::string& theme) {
+    settings.search_engine = engine;
+    settings.theme = theme;
+    
+    GKeyFile* key_file = g_key_file_new();
+    g_key_file_set_string(key_file, "General", "search_engine", settings.search_engine.c_str());
+    g_key_file_set_string(key_file, "General", "theme", settings.theme.c_str());
+    
+    std::string path = get_user_data_dir() + "settings.ini";
+    g_key_file_save_to_file(key_file, path.c_str(), NULL);
+    g_key_file_free(key_file);
+}
+
+void add_history_item(const std::string& url, const std::string& title) {
+    if (url.find("file://") == 0 || url.empty()) return; // Don't log local files
+    
+    // Remove duplicate if exists (so we can move it to the top/end)
+    auto it = std::remove_if(browsing_history.begin(), browsing_history.end(), 
+        [&](const HistoryItem& i){ return i.url == url; });
+    browsing_history.erase(it, browsing_history.end());
+
+    HistoryItem item = { title.empty() ? url : title, url, get_current_time_str() };
+    browsing_history.push_back(item);
+    save_history_to_disk();
+}
+
+void add_search_query(const std::string& query) {
+    if (query.length() < 2) return;
+    // Deduplicate
+    auto it = std::remove(search_history.begin(), search_history.end(), query);
+    search_history.erase(it, search_history.end());
+    
+    search_history.push_back(query);
+    save_searches_to_disk();
+}
+
+void clear_all_history() {
+    browsing_history.clear();
+    search_history.clear();
+    save_history_to_disk();
+    save_searches_to_disk();
+}
+
+// --- Suggestion Logic ---
+
+// Helper to parse JSON list ["a","b"]
+std::vector<std::string> parse_remote_suggestions(const std::string& json) {
     std::vector<std::string> results;
     try {
-        size_t start_arr = json.find('[', 1); // Find start of ["sug1", ...]
-        if (start_arr == std::string::npos) return results;
-        
+        size_t start_arr = json.find('[', 1); 
         size_t end_arr = json.find(']', start_arr);
-        if (end_arr == std::string::npos) return results;
+        if (start_arr == std::string::npos || end_arr == std::string::npos) return results;
 
         std::string list_content = json.substr(start_arr + 1, end_arr - start_arr - 1);
-        
-        // Regex to match "string"
         std::regex re("\"([^\"]+)\"");
         auto begin = std::sregex_iterator(list_content.begin(), list_content.end(), re);
         auto end = std::sregex_iterator();
 
-        for (std::sregex_iterator i = begin; i != end; ++i) {
-            std::smatch match = *i;
-            results.push_back(match[1].str());
+        for (auto i = begin; i != end; ++i) {
+            results.push_back((*i)[1].str());
         }
     } catch (...) {}
     return results;
 }
 
-void on_suggestion_fetched_gtk(SoupSession* session, SoupMessage* msg, gpointer user_data) {
-    if (msg->status_code != 200) return;
+// Combine Local Search History + Google Suggestions
+std::vector<std::string> get_combined_suggestions(const std::string& query, const std::string& remote_json) {
+    std::vector<std::string> combined;
+    std::string q_lower = query;
+    std::transform(q_lower.begin(), q_lower.end(), q_lower.begin(), ::tolower);
 
-    GtkEntryCompletion* completion = GTK_ENTRY_COMPLETION(user_data);
-    GtkListStore* store = GTK_LIST_STORE(gtk_entry_completion_get_model(completion));
-    
-    std::string body = msg->response_body->data;
-    std::vector<std::string> sugs = parse_suggestions(body);
-
-    gtk_list_store_clear(store);
-    GtkTreeIter iter;
-    for (const auto& s : sugs) {
-        gtk_list_store_append(store, &iter);
-        gtk_list_store_set(store, &iter, 0, s.c_str(), -1);
+    // 1. Check Search History (Reverse order to show most recent first)
+    int count = 0;
+    for (auto it = search_history.rbegin(); it != search_history.rend(); ++it) {
+        if (count > 2) break; // Limit local history to top 3
+        std::string s_lower = *it;
+        std::transform(s_lower.begin(), s_lower.end(), s_lower.begin(), ::tolower);
+        
+        if (s_lower.find(q_lower) == 0) { // Starts with query
+            combined.push_back("[H] " + *it); // Marker for frontend
+            count++;
+        }
     }
-    // Force popup refresh
-    gtk_entry_completion_complete(completion);
+
+    // 2. Parse and Append Remote
+    if (!remote_json.empty()) {
+        std::vector<std::string> remote = parse_remote_suggestions(remote_json);
+        for (const auto& r : remote) {
+            // Avoid duplicates with local history
+            bool exists = false;
+            for(const auto& c : combined) {
+                if(c.find(r) != std::string::npos) exists = true;
+            }
+            if(!exists) combined.push_back(r);
+        }
+    }
+    return combined;
 }
 
-// 2. Callback for Home Page (HTML/JS)
-struct HomeFetchData { WebKitWebView* view; };
+// Struct to pass data to soup callback
+struct SuggestionRequest {
+    bool is_gtk;
+    gpointer target;
+    std::string query;
+};
 
-void on_suggestion_fetched_js(SoupSession* session, SoupMessage* msg, gpointer user_data) {
-    HomeFetchData* data = (HomeFetchData*)user_data;
+void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_data) {
+    SuggestionRequest* req = (SuggestionRequest*)user_data;
+    
+    std::string body = "";
     if (msg->status_code == 200) {
-        std::string body = msg->response_body->data;
-        std::vector<std::string> sugs = parse_suggestions(body);
+        body = msg->response_body->data;
+    }
+    
+    std::vector<std::string> final_list = get_combined_suggestions(req->query, body);
+
+    if (req->is_gtk) {
+        // Populate GTK Entry Completion
+        GtkEntryCompletion* completion = GTK_ENTRY_COMPLETION(req->target);
+        GtkListStore* store = GTK_LIST_STORE(gtk_entry_completion_get_model(completion));
         
-        // Build JS Array string: ['a', 'b']
+        gtk_list_store_clear(store);
+        GtkTreeIter iter;
+        for (const auto& s : final_list) {
+            // For GTK URL bar, strip the [H] tag so it looks clean
+            std::string text = s;
+            if(text.find("[H] ") == 0) text = text.substr(4);
+            
+            gtk_list_store_append(store, &iter);
+            gtk_list_store_set(store, &iter, 0, text.c_str(), -1);
+        }
+        gtk_entry_completion_complete(completion);
+    } else {
+        // Send to Home Page JS
         std::stringstream js_array;
         js_array << "[";
-        for (size_t i = 0; i < sugs.size(); ++i) {
-            js_array << "'" << sugs[i] << "'";
-            if (i < sugs.size() - 1) js_array << ",";
+        for (size_t i = 0; i < final_list.size(); ++i) {
+            js_array << "'" << final_list[i] << "'";
+            if (i < final_list.size() - 1) js_array << ",";
         }
         js_array << "]";
 
         std::string script = "renderSuggestions(" + js_array.str() + ");";
-        run_js(data->view, script);
+        run_js(WEBKIT_WEB_VIEW(req->target), script);
     }
-    delete data;
+    delete req;
 }
 
-// Trigger Fetch
 void fetch_suggestions(const std::string& query, bool is_gtk, gpointer target) {
-    if (query.length() < 2) return; // Don't fetch for 1 char
+    if (query.length() < 2) return;
     
+    SuggestionRequest* req = new SuggestionRequest{ is_gtk, target, query };
     std::string url = settings.suggestion_api + query;
     SoupMessage* msg = soup_message_new("GET", url.c_str());
-    
-    if (is_gtk) {
-        soup_session_queue_message(soup_session, msg, on_suggestion_fetched_gtk, target);
-    } else {
-        HomeFetchData* data = new HomeFetchData{ WEBKIT_WEB_VIEW(target) };
-        soup_session_queue_message(soup_session, msg, on_suggestion_fetched_js, data);
-    }
+    soup_session_queue_message(soup_session, msg, on_suggestion_ready, req);
 }
 
 
-// --- System Stats Helper ---
+// --- System Stats Helper (Preserved) ---
 void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
 #ifdef _WIN32
-    // --- WINDOWS IMPLEMENTATION ---
-    // 1. RAM
+    // Windows Implementation Placeholder
     MEMORYSTATUSEX memInfo;
     memInfo.dwLength = sizeof(MEMORYSTATUSEX);
     GlobalMemoryStatusEx(&memInfo);
@@ -160,14 +328,9 @@ void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
     ss.precision(1);
     ss << std::fixed << physMemUsed / (1024*1024*1024) << " / " << totalPhysMem / (1024*1024*1024) << " GB";
     ram_usage = ss.str();
-
-    // 2. CPU (Simplified for brevity, usually requires a dedicated class or global state to track deltas)
-    // For a quick fix, we return 0 or implement GetSystemTimes logic. 
-    // Given the complexity of Windows CPU load calculation in a single function, 
-    // we'll leave it as a placeholder or you can implement the FILETIME delta logic.
-    cpu_usage = 0; // Placeholder for Windows
+    cpu_usage = 0; 
 #else
-    // --- LINUX IMPLEMENTATION (Keep your original code) ---
+    // Linux Implementation
     struct sysinfo memInfo;
     sysinfo(&memInfo);
     long long physMemUsed = (memInfo.totalram - memInfo.freeram) * memInfo.mem_unit;
@@ -197,62 +360,7 @@ void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
 #endif
 }
 
-// --- Settings Management ---
-void load_settings() {
-    std::string config_path = get_config_path();
-    // Debug output to see where it's looking
-    std::cout << "[INFO] Loading settings from: " << config_path << std::endl;
-
-    GKeyFile* key_file = g_key_file_new();
-    if (g_key_file_load_from_file(key_file, config_path.c_str(), G_KEY_FILE_NONE, NULL)) {
-        gchar* engine = g_key_file_get_string(key_file, "General", "search_engine", NULL);
-        if (engine) { 
-            settings.search_engine = engine; 
-            g_free(engine); 
-        }
-        
-        gchar* theme = g_key_file_get_string(key_file, "General", "theme", NULL);
-        if (theme) { 
-            settings.theme = theme; 
-            g_free(theme); 
-        }
-        std::cout << "[INFO] Settings Loaded -> Theme: " << settings.theme << std::endl;
-    } else {
-        std::cout << "[INFO] No settings file found, using defaults." << std::endl;
-    }
-    g_key_file_free(key_file);
-    
-    if(!soup_session) soup_session = soup_session_new();
-    std::string base = get_assets_path();
-    settings.home_url = "file://" + base + "home.html";
-    settings.settings_url = "file://" + base + "settings.html";
-}
-
-void save_settings(const std::string& engine, const std::string& theme) {
-    settings.search_engine = engine;
-    settings.theme = theme;
-    
-    GKeyFile* key_file = g_key_file_new();
-    g_key_file_set_string(key_file, "General", "search_engine", settings.search_engine.c_str());
-    g_key_file_set_string(key_file, "General", "theme", settings.theme.c_str());
-    
-    std::string path = get_config_path();
-    
-    // Ensure the directory exists (Linux specific)
-    std::string dir = path.substr(0, path.find_last_of('/'));
-    if (g_mkdir_with_parents(dir.c_str(), 0755) == -1) {
-        std::cerr << "[ERROR] Failed to create config directory: " << dir << std::endl;
-    }
-
-    if (!g_key_file_save_to_file(key_file, path.c_str(), NULL)) {
-        std::cerr << "[ERROR] Failed to write settings to file!" << std::endl;
-    } else {
-        std::cout << "[INFO] Settings Saved successfully to: " << path << std::endl;
-    }
-    g_key_file_free(key_file);
-}
-
-// --- Helper: Run JS Safe ---
+// --- IPC: C++ <-> JS Communication ---
 void run_js(WebKitWebView* view, const std::string& script) {
     webkit_web_view_evaluate_javascript(view, script.c_str(), -1, NULL, NULL, NULL, NULL, NULL);
 }
@@ -263,10 +371,7 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     std::string json(json_str);
     g_free(json_str);
 
-    // DEBUG: Print exactly what C++ receives
-    std::cout << "[DEBUG] JS Message: " << json << std::endl;
-    
-    // Regex Helper
+    // Simple Regex JSON Parser
     auto get_json_val = [&](std::string key) -> std::string {
         std::regex re("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
         std::smatch match;
@@ -276,66 +381,74 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         return "";
     };
 
-    // 1. EXTRACT THE TYPE FIRST
     std::string type = get_json_val("type");
+    WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
 
-    // 2. SWITCH BASED ON TYPE
     if (type == "search") {
         std::string query = get_json_val("query");
-        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+        add_search_query(query); // Save to history
         std::string url = settings.search_engine + query;
         webkit_web_view_load_uri(view, url.c_str());
     }
     else if (type == "get_suggestions") {
         std::string query = get_json_val("query");
-        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
         fetch_suggestions(query, false, view);
     }
     else if (type == "save_settings") {
         std::string engine = get_json_val("engine");
         std::string theme = get_json_val("theme");
         
-        std::cout << "[DEBUG] Parsed Engine: " << engine << std::endl;
-        std::cout << "[DEBUG] Parsed Theme: " << theme << std::endl;
-
-        // Validation logic
-        if (engine.empty()) {
-            std::cerr << "[WARN] Failed to parse engine, keeping old value." << std::endl;
-            engine = settings.search_engine;
-        }
+        if (engine.empty()) engine = settings.search_engine;
         if (theme.empty()) theme = settings.theme;
 
         save_settings(engine, theme);
         
-        // Update UI immediately
-        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
-        std::string script = "setTheme('" + theme + "');";
-        run_js(view, script);
+        // Update current view immediately
+        run_js(view, "setTheme('" + theme + "');");
         
-        // Update other tabs
+        // Update all other tabs
         if(global_window) {
              GtkNotebook* nb = get_notebook(global_window);
              int pages = gtk_notebook_get_n_pages(nb);
              for(int i=0; i<pages; i++) {
                  WebKitWebView* v = WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(nb, i));
-                 run_js(v, script);
+                 run_js(v, "setTheme('" + theme + "');");
              }
         }
     }
     else if (type == "get_theme") {
-        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
         run_js(view, "setTheme('" + settings.theme + "');");
     }
     else if (type == "get_settings") {
-        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
         std::string script = "loadCurrentSettings('" + settings.search_engine + "', '" + settings.theme + "');";
         run_js(view, script);
     }
     else if (type == "clear_cache") {
         WebKitWebsiteDataManager* mgr = webkit_web_context_get_website_data_manager(global_context);
         webkit_website_data_manager_clear(mgr, WEBKIT_WEBSITE_DATA_ALL, 0, NULL, NULL, NULL);
-        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
         run_js(view, "showToast('Cache Cleared');"); 
+    }
+    else if (type == "open_url") {
+        std::string url = get_json_val("url");
+        webkit_web_view_load_uri(view, url.c_str());
+    }
+    else if (type == "get_history") {
+        // Send history as JSON array
+        std::stringstream ss;
+        ss << "[";
+        for(size_t i=0; i<browsing_history.size(); ++i) {
+            const auto& h = browsing_history[i];
+            // Basic escaping for JSON validity should be added here in production
+            ss << "{ \"title\": \"" << h.title << "\", \"url\": \"" << h.url << "\", \"time\": \"" << h.time_str << "\" }";
+            if(i < browsing_history.size()-1) ss << ",";
+        }
+        ss << "]";
+        std::string script = "renderHistory('" + ss.str() + "');";
+        run_js(view, script);
+    }
+    else if (type == "clear_history") {
+        clear_all_history();
+        run_js(view, "renderHistory('[]');");
     }
 }
 
@@ -354,6 +467,26 @@ WebKitWebView* get_active_webview(GtkWidget* win) {
 }
 
 // --- Tab Logic ---
+
+// Hook to capture URL visits for history
+void on_load_changed(WebKitWebView* web_view, WebKitLoadEvent load_event, gpointer win) {
+    if (load_event == WEBKIT_LOAD_COMMITTED) {
+        const char* uri = webkit_web_view_get_uri(web_view);
+        if (uri) {
+            std::string u(uri);
+            if(u.find("file://") == std::string::npos) {
+                // It's a real web page
+                gtk_entry_set_text(get_url_bar(GTK_WIDGET(win)), uri);
+                const char* title = webkit_web_view_get_title(web_view);
+                add_history_item(u, title ? std::string(title) : "");
+            } else {
+                // It's an internal page (home/settings)
+                gtk_entry_set_text(get_url_bar(GTK_WIDGET(win)), "");
+            }
+        }
+    }
+}
+
 static void on_tab_close(GtkButton*, gpointer v) { 
     GtkWidget* view = GTK_WIDGET(v);
     GtkWidget* win = GTK_WIDGET(g_object_get_data(G_OBJECT(view), "win"));
@@ -381,26 +514,23 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_notebook_set_tab_reorderable(notebook, view, TRUE);
     gtk_widget_show(view);
     
+    // Connect History & UI Signals
+    g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), win);
+    
     g_signal_connect(close, "clicked", G_CALLBACK(on_tab_close), view);
     g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
         const char* t = webkit_web_view_get_title(v); if(t) gtk_label_set_text(l, t); 
     }), label);
-    g_signal_connect(view, "load-changed", G_CALLBACK(+[](WebKitWebView* v, WebKitLoadEvent e, gpointer w){
-        if(e == WEBKIT_LOAD_COMMITTED) {
-             const char* u = webkit_web_view_get_uri(v);
-             if(u && std::string(u).find("file://") == std::string::npos) gtk_entry_set_text(get_url_bar(GTK_WIDGET(w)), u);
-             else gtk_entry_set_text(get_url_bar(GTK_WIDGET(w)), ""); 
-        }
-    }), win);
 
     gtk_notebook_set_current_page(notebook, page);
     webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
     return view;
 }
 
+// --- Toolbar Events ---
+
 static void on_url_changed(GtkEditable* editable, gpointer user_data) {
     std::string text = gtk_entry_get_text(GTK_ENTRY(editable));
-    // If it looks like a URL, don't suggest
     if (text.find("://") != std::string::npos || text.find(".") != std::string::npos) return;
     
     GtkEntryCompletion* completion = gtk_entry_get_completion(GTK_ENTRY(editable));
@@ -411,8 +541,15 @@ static void on_url_activate(GtkEntry* e, gpointer win) {
     WebKitWebView* v = get_active_webview(GTK_WIDGET(win));
     if (!v) return;
     std::string t = gtk_entry_get_text(e);
-    if(t.find("://") == std::string::npos && t.find(".") == std::string::npos) t = settings.search_engine + t;
-    else if(t.find("://") == std::string::npos) t = "https://" + t;
+    
+    if(t.find("://") == std::string::npos && t.find(".") == std::string::npos) {
+        // It's a query
+        add_search_query(t);
+        t = settings.search_engine + t;
+    } 
+    else if(t.find("://") == std::string::npos) {
+        t = "https://" + t;
+    }
     webkit_web_view_load_uri(v, t.c_str());
     gtk_widget_grab_focus(GTK_WIDGET(v));
 }
@@ -421,7 +558,11 @@ static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* mode
     gchar* value;
     gtk_tree_model_get(model, iter, 0, &value, -1);
     gtk_entry_set_text(GTK_ENTRY(entry), value);
-    std::string url = settings.search_engine + std::string(value);
+    
+    // Trigger Activate logic manually to save search history if needed, 
+    // or just load directly. Let's trigger activate to keep logic consistent.
+    g_signal_emit_by_name(entry, "activate");
+    
     g_free(value);
     return TRUE;
 }
@@ -431,9 +572,7 @@ void on_incognito_clicked(GtkButton*, gpointer) {
     create_window(ephemeral_ctx);
 }
 
-void on_settings_clicked(GtkButton*, gpointer win) {
-    create_new_tab(GTK_WIDGET(win), settings.settings_url, global_context);
-}
+// --- Window Creation ---
 
 void create_window(WebKitWebContext* ctx) {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -442,7 +581,6 @@ void create_window(WebKitWebContext* ctx) {
         global_window = win;
     }
     
-    // Check if Incognito
     if (webkit_web_context_is_ephemeral(ctx)) {
         gtk_window_set_title(GTK_WINDOW(win), "Zyro (Incognito)");
         gtk_style_context_add_class(gtk_widget_get_style_context(win), "incognito");
@@ -478,11 +616,10 @@ void create_window(WebKitWebContext* ctx) {
     GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
     GtkWidget* b_add = mkbtn("tab-new-symbolic", "New Tab");
 
-    // --- URL Bar with Suggestions (MERGED HERE) ---
+    // URL Bar with Suggestions
     GtkWidget* url = gtk_entry_new();
     g_object_set_data(G_OBJECT(win), "url_bar", url);
 
-    // 1. Setup Completion
     GtkEntryCompletion* completion = gtk_entry_completion_new();
     GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
     gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(store));
@@ -491,22 +628,17 @@ void create_window(WebKitWebContext* ctx) {
     gtk_entry_completion_set_inline_completion(completion, FALSE);
     gtk_entry_set_completion(GTK_ENTRY(url), completion);
     
-    // 2. Connect Signals for Suggestions
     g_signal_connect(url, "changed", G_CALLBACK(on_url_changed), NULL);
     g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url);
     g_object_unref(completion);
-    // ---------------------------------------------
     
-    // -- Menu Button Logic --
+    // --- Menu Popover ---
     GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu");
-    
-    // Create Popover for Menu
     GtkWidget* popover = gtk_popover_new(b_menu);
     gtk_style_context_add_class(gtk_widget_get_style_context(popover), "menu-popover");
     
     GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
-    // --- Helper to create styled Menu Items ---
     auto mk_menu_item = [&](const char* label, const char* icon_name, GCallback cb, gpointer data) {
         GtkWidget* btn = gtk_button_new();
         gtk_style_context_add_class(gtk_widget_get_style_context(btn), "menu-item");
@@ -521,10 +653,7 @@ void create_window(WebKitWebContext* ctx) {
         gtk_container_add(GTK_CONTAINER(btn), box);
         
         if (cb) g_signal_connect(btn, "clicked", cb, data);
-        
-        // Auto-close popover on click
         g_signal_connect_swapped(btn, "clicked", G_CALLBACK(gtk_widget_hide), popover);
-        
         return btn;
     };
 
@@ -534,9 +663,6 @@ void create_window(WebKitWebContext* ctx) {
         return s;
     };
 
-    // --- Menu Items Construction ---
-    
-    // Group 1: New Tabs/Windows
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Tab", "tab-new-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){ 
         create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); 
     }), win), FALSE, FALSE, 0);
@@ -545,34 +671,35 @@ void create_window(WebKitWebContext* ctx) {
 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
 
-    // Group 2: History/Downloads (Placeholders)
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("History", "document-open-recent-symbolic", NULL, NULL), FALSE, FALSE, 0);
+    // History Item
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("History", "document-open-recent-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
+        create_new_tab(GTK_WIDGET(w), settings.history_url, global_context); 
+    }), win), FALSE, FALSE, 0);
+    
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Downloads", "folder-download-symbolic", NULL, NULL), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Bookmarks", "star-new-symbolic", NULL, NULL), FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
 
-    // Group 3: Tools
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Print...", "printer-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
         WebKitWebView* v = get_active_webview(GTK_WIDGET(w));
         if(v) run_js(v, "window.print();"); 
     }), win), FALSE, FALSE, 0);
 
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Settings", "preferences-system-symbolic", G_CALLBACK(on_settings_clicked), win), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Settings", "preferences-system-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
+        create_new_tab(GTK_WIDGET(w), settings.settings_url, global_context); 
+    }), win), FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
 
-    // Group 4: Exit
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Exit Zyro", "application-exit-symbolic", G_CALLBACK(gtk_main_quit), NULL), FALSE, FALSE, 0);
 
     gtk_widget_show_all(menu_box);
     gtk_container_add(GTK_CONTAINER(popover), menu_box);
-    
     g_signal_connect(b_menu, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p){ 
         gtk_popover_popup(GTK_POPOVER(p)); 
     }), popover);
-    // -----------------------
-
+    
+    // --- Packing ---
     gtk_box_pack_start(GTK_BOX(toolbar), b_back, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_refresh, FALSE, FALSE, 0);
@@ -585,22 +712,20 @@ void create_window(WebKitWebContext* ctx) {
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(win), box);
 
-    // Navigation Signals
+    // Signals
     g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_back(v); }), win);
     g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_forward(v); }), win);
     g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_reload(v); }), win);
     g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_load_uri(v, settings.home_url.c_str()); }), win);
     g_signal_connect(b_add, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); }), win);
-    
-    // URL Activate (Load URL on Enter)
     g_signal_connect(url, "activate", G_CALLBACK(on_url_activate), win);
-    
     g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     
     gtk_widget_show_all(win);
     create_new_tab(win, settings.home_url, ctx);
 }
 
+// Background stats updater
 static gboolean update_home_stats(gpointer data) {
     if(!global_window) return TRUE;
     GtkNotebook* notebook = get_notebook(global_window);
@@ -621,13 +746,11 @@ static gboolean update_home_stats(gpointer data) {
 
 int main(int argc, char** argv) {
     gtk_init(&argc, &argv);
-    load_settings();
+    load_data();
     
-    char* cwd = g_get_current_dir(); std::string current(cwd); g_free(cwd);
-    std::string cache = current + "/cache";
-    std::string data = current + "/data";
-    g_mkdir_with_parents(cache.c_str(), 0755);
-    g_mkdir_with_parents(data.c_str(), 0755);
+    std::string user_dir = get_user_data_dir();
+    std::string cache = user_dir + "cache";
+    std::string data = user_dir + "data";
 
     WebKitWebsiteDataManager* mgr = webkit_website_data_manager_new("base-cache-directory", cache.c_str(), "base-data-directory", data.c_str(), NULL);
     global_context = webkit_web_context_new_with_website_data_manager(mgr);

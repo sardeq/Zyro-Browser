@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>History</title>
+    <style>
+        :root { --bg: #1a1b1e; --panel: #202124; --text: #e8eaed; --accent: #8ab4f8; }
+        body.theme-light { --bg: #f1f3f4; --panel: #ffffff; --text: #202124; --accent: #1a73e8; }
+        
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; transition: background 0.3s; }
+        h1 { border-bottom: 1px solid #333; padding-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+        
+        .history-list { list-style: none; padding: 0; }
+        .history-item { 
+            background: var(--panel); padding: 15px; margin-bottom: 10px; border-radius: 8px; 
+            display: flex; justify-content: space-between; align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.1s;
+        }
+        .history-item:hover { transform: translateX(5px); border-left: 3px solid var(--accent); }
+        
+        .info { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+        .title { font-weight: bold; font-size: 16px; margin-bottom: 4px; }
+        .url { color: #9aa0a6; font-size: 13px; }
+        .time { font-size: 12px; color: #5f6368; min-width: 80px; text-align: right; }
+
+        button.clear-btn {
+            background: #e06c75; color: white; border: none; padding: 8px 16px; 
+            border-radius: 6px; cursor: pointer; font-size: 14px;
+        }
+    </style>
+</head>
+<body class="theme-dark">
+    <h1>
+        Browsing History
+        <button class="clear-btn" onclick="clearHistory()">Clear History</button>
+    </h1>
+    <ul class="history-list" id="list"></ul>
+
+    <script>
+        function renderHistory(jsonStr) {
+            const list = document.getElementById('list');
+            const data = JSON.parse(jsonStr); // Expecting array of {title, url, time}
+            list.innerHTML = '';
+            
+            data.reverse().forEach(item => {
+                const li = document.createElement('li');
+                li.className = 'history-item';
+                li.innerHTML = `
+                    <div class="info">
+                        <div class="title">${item.title || item.url}</div>
+                        <div class="url">${item.url}</div>
+                    </div>
+                    <div class="time">${item.time}</div>
+                `;
+                li.onclick = () => window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'open_url', url: item.url }));
+                list.appendChild(li);
+            });
+        }
+
+        function clearHistory() {
+            if(confirm("Clear all browsing history?")) {
+                window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'clear_history' }));
+                document.getElementById('list').innerHTML = '';
+            }
+        }
+        
+        function setTheme(themeName) { document.body.className = 'theme-' + themeName; }
+
+        window.onload = () => {
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_theme' }));
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_history' }));
+        }
+    </script>
+</body>
+</html>

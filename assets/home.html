@@ -104,7 +104,6 @@
             }, 200);
         });
         
-        // Called from C++
         function renderSuggestions(items) {
             suggestBox.innerHTML = '';
             if (!items || items.length === 0) {
@@ -112,14 +111,27 @@
                 return;
             }
 
-            items.forEach(item => {
+            items.forEach(rawItem => {
+                let text = rawItem;
+                let isHistory = false;
+
+                // Check for history marker from C++
+                if (text.startsWith("[H] ")) {
+                    isHistory = true;
+                    text = text.substring(4); // Remove "[H] "
+                }
+
                 const div = document.createElement('div');
                 div.className = 'suggestion-item';
-                div.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                    <span>${item}</span>
-                `;
-                div.onclick = () => doSearch(item);
+                
+                // Use Clock icon for history, Search icon for others
+                const icon = isHistory 
+                    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>'
+                    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+
+                div.innerHTML = `${icon}<span>${text}</span>`;
+                
+                div.onclick = () => doSearch(text);
                 suggestBox.appendChild(div);
             });
             
