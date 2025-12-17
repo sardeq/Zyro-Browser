@@ -12,7 +12,20 @@ if(UNIX AND NOT APPLE)
     pkg_check_modules(LIBSECRET REQUIRED libsecret-1)
 endif()
 
-include_directories(${GTK3_INCLUDE_DIRS} ${WEBKIT_INCLUDE_DIRS} ${SOUP_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIRS})
+
+include_directories(
+    ${CMAKE_SOURCE_DIR}/Browser
+    ${CMAKE_SOURCE_DIR}/Downloads
+    ${CMAKE_SOURCE_DIR}/Globals
+    ${CMAKE_SOURCE_DIR}/Security
+    ${CMAKE_SOURCE_DIR}/Storage
+    ${CMAKE_SOURCE_DIR}/Utils
+    ${GTK3_INCLUDE_DIRS} 
+    ${WEBKIT_INCLUDE_DIRS} 
+    ${SOUP_INCLUDE_DIRS} 
+    ${OPENSSL_INCLUDE_DIRS}
+)
+
 if(UNIX AND NOT APPLE)
     include_directories(${LIBSECRET_INCLUDE_DIRS})
 endif()
@@ -21,12 +34,12 @@ link_directories(${GTK3_LIBRARY_DIRS} ${WEBKIT_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS
 
 add_executable(ZyroBrowser 
     main.cpp 
-    Globals.cpp 
-    Utils.cpp 
-    Security.cpp 
-    Storage.cpp 
-    Downloads.cpp 
-    Browser.cpp
+    Globals/Globals.cpp 
+    Utils/Utils.cpp 
+    Security/Security.cpp 
+    Storage/Storage.cpp 
+    Downloads/Downloads.cpp 
+    Browser/Browser.cpp
 )
 
 if(UNIX AND NOT APPLE)
