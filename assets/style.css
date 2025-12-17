@@ -3,18 +3,49 @@
 /* Main Window Background */
 window { background-color: #1a1b1e; }
 
-/* --- Toolbar Area --- */
-box.toolbar {
-    background-color: #202124;
-    padding: 8px 10px;
-    border-bottom: 1px solid #1a1b1e;
-    min-height: 44px;
+/* --- Notebook Header (Tabs Area) --- */
+/* Match this color to the toolbar for the "connected" look */
+notebook header { 
+    background-color: #202124; 
+    padding: 6px 10px 0 10px; /* Slight top padding */
 }
 
+notebook tab {
+    background-color: #202124; /* Same as header background */
+    color: #9aa0a6;
+    border: none;
+    border-radius: 8px 8px 0 0;
+    margin: 0 4px; /* Space between tabs */
+    padding: 8px 16px;
+    font-size: 13px;
+    transition: background 0.2s;
+}
+
+notebook tab:hover { 
+    background-color: #292a2d; /* Slightly lighter on hover */
+}
+
+notebook tab:checked {
+    background-color: #323639; /* Active tab distinct */
+    color: #e8eaed;
+    font-weight: bold;
+    border-bottom: 2px solid #8ab4f8; /* Optional active indicator */
+}
+
+/* --- Toolbar Area --- */
+box.toolbar {
+    background-color: #202124; /* MUST match notebook header */
+    padding: 8px 10px;
+    /* Remove top border so it blends with tabs */
+    border-top: none; 
+    border-bottom: 1px solid #1a1b1e;
+}
+
+/* --- URL Bar --- */
 entry {
     background-color: #303134;
     color: #e8eaed;
-    border-radius: 20px; /* Pill shape */
+    border-radius: 20px; 
     border: 1px solid transparent;
     padding: 0 16px;
     margin: 0 8px;
@@ -25,20 +56,20 @@ entry {
 
 entry:focus {
     background-color: #202124;
-    border: 1px solid #8ab4f8; /* Blue border on focus */
+    border: 1px solid #8ab4f8;
     box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2);
 }
 
 entry selection { background-color: #174ea6; color: #ffffff; }
 
-/* --- Buttons (Flat & Clean) --- */
+/* --- Buttons --- */
 button {
     background-image: none;
     background-color: transparent;
     border: none;
     box-shadow: none;
     color: #9aa0a6;
-    border-radius: 50%; /* Circle hover */
+    border-radius: 50%;
     padding: 6px;
     min-width: 32px;
     min-height: 32px;
@@ -48,71 +79,27 @@ button {
 button:hover { background-color: #3c4043; color: #e8eaed; }
 button:active { background-color: #4d5156; }
 
-/* --- Tabs (Chrome/Brave Style) --- */
-notebook { background-color: #1a1b1e; padding: 0; }
-notebook header { background-color: #1a1b1e; border: none; }
-notebook header.top { padding: 4px 4px 0 4px; }
-
-notebook tab {
-    background-color: #1a1b1e;
-    color: #9aa0a6;
-    border: none;
-    border-radius: 8px 8px 0 0; /* Rounded top corners */
-    margin: 0 2px;
-    padding: 6px 12px;
-    font-size: 13px;
-    transition: background 0.1s;
-}
-
-notebook tab:hover { background-color: #292a2d; }
-
-notebook tab:checked {
-    background-color: #35363a; /* Active tab lighter */
-    color: #e8eaed;
-    font-weight: bold;
-}
-
 /* Close button on tab */
 button#tab-close-btn {
     min-width: 16px; min-height: 16px;
     padding: 0; margin-left: 8px;
     color: #9aa0a6;
+    border-radius: 4px;
 }
 button#tab-close-btn:hover { background-color: #5f6368; color: white; }
 
 /* --- Menu Popover --- */
-popover { background-color: #292a2d; color: white; border: 1px solid #444; }
-popover button { border-radius: 4px; padding: 8px; }
-popover button:hover { background-color: #3c4043; }
-
-
-/* --- Main Menu Popover --- */
 .menu-popover {
     background-color: #292a2d;
     border: 1px solid #444;
-    padding: 6px 0; /* Vertical padding only */
+    padding: 6px 0;
     border-radius: 8px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
 }
-
-/* The buttons inside the menu */
 .menu-item {
-    background: transparent;
-    border: none;
-    color: #e8eaed;
-    border-radius: 0; /* Full width feel */
-    min-height: 36px;
-    padding: 0 20px;
-    margin: 0;
-    box-shadow: none;
-    text-shadow: none;
-    transition: background 0.1s;
+    background: transparent; border: none; color: #e8eaed;
+    border-radius: 0; min-height: 36px; padding: 0 20px;
 }
-
-.menu-item:hover {
-    background-color: #3c4043;
-    color: #ffffff;
-}
+.menu-item:hover { background-color: #3c4043; color: #ffffff; }
 
 /* The box inside the button (holds Icon + Label) */
 .menu-item box {

@@ -50,7 +50,6 @@ GtkNotebook* get_notebook(GtkWidget* win);
 void run_js(WebKitWebView* view, const std::string& script); 
 GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context);
 WebKitWebView* get_active_webview(GtkWidget* win);
-GtkEntry* get_url_bar(GtkWidget* win);
 
 // --- Path & Time Helpers ---
 std::string get_assets_path() {
@@ -80,7 +79,7 @@ std::string get_user_data_dir() {
     std::string dir = std::string(home) + "/.config/zyro/";
     // Ensure directory exists
     if (g_mkdir_with_parents(dir.c_str(), 0755) == -1) {
-        // Handle error if needed, usually quiet
+        // Handle error if needed
     }
     return dir;
 }
@@ -99,7 +98,6 @@ std::string get_current_time_str() {
 void save_history_to_disk() {
     std::ofstream f(get_user_data_dir() + "history.txt");
     for (const auto& i : browsing_history) {
-        // Simple delimiter format: URL|Title|Time
         f << i.url << "|" << i.title << "|" << i.time_str << "\n";
     }
 }
@@ -170,9 +168,8 @@ void save_settings(const std::string& engine, const std::string& theme) {
 }
 
 void add_history_item(const std::string& url, const std::string& title) {
-    if (url.find("file://") == 0 || url.empty()) return; // Don't log local files
+    if (url.find("file://") == 0 || url.empty()) return; 
     
-    // Remove duplicate if exists (so we can move it to the top/end)
     auto it = std::remove_if(browsing_history.begin(), browsing_history.end(), 
         [&](const HistoryItem& i){ return i.url == url; });
     browsing_history.erase(it, browsing_history.end());
@@ -184,7 +181,6 @@ void add_history_item(const std::string& url, const std::string& title) {
 
 void add_search_query(const std::string& query) {
     if (query.length() < 2) return;
-    // Deduplicate
     auto it = std::remove(search_history.begin(), search_history.end(), query);
     search_history.erase(it, search_history.end());
     
@@ -201,7 +197,12 @@ void clear_all_history() {
 
 // --- Suggestion Logic ---
 
-// Helper to parse JSON list ["a","b"]
+struct SuggestionRequest {
+    bool is_gtk;
+    gpointer target;
+    std::string query;
+};
+
 std::vector<std::string> parse_remote_suggestions(const std::string& json) {
     std::vector<std::string> results;
     try {
@@ -221,21 +222,20 @@ std::vector<std::string> parse_remote_suggestions(const std::string& json) {
     return results;
 }
 
-// Combine Local Search History + Google Suggestions
 std::vector<std::string> get_combined_suggestions(const std::string& query, const std::string& remote_json) {
     std::vector<std::string> combined;
     std::string q_lower = query;
     std::transform(q_lower.begin(), q_lower.end(), q_lower.begin(), ::tolower);
 
-    // 1. Check Search History (Reverse order to show most recent first)
+    // 1. Check Search History
     int count = 0;
     for (auto it = search_history.rbegin(); it != search_history.rend(); ++it) {
-        if (count > 2) break; // Limit local history to top 3
+        if (count > 2) break; 
         std::string s_lower = *it;
         std::transform(s_lower.begin(), s_lower.end(), s_lower.begin(), ::tolower);
         
-        if (s_lower.find(q_lower) == 0) { // Starts with query
-            combined.push_back("[H] " + *it); // Marker for frontend
+        if (s_lower.find(q_lower) == 0) { 
+            combined.push_back("[H] " + *it); 
             count++;
         }
     }
@@ -244,7 +244,6 @@ std::vector<std::string> get_combined_suggestions(const std::string& query, cons
     if (!remote_json.empty()) {
         std::vector<std::string> remote = parse_remote_suggestions(remote_json);
         for (const auto& r : remote) {
-            // Avoid duplicates with local history
             bool exists = false;
             for(const auto& c : combined) {
                 if(c.find(r) != std::string::npos) exists = true;
@@ -254,13 +253,6 @@ std::vector<std::string> get_combined_suggestions(const std::string& query, cons
     }
     return combined;
 }
-
-// Struct to pass data to soup callback
-struct SuggestionRequest {
-    bool is_gtk;
-    gpointer target;
-    std::string query;
-};
 
 void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_data) {
     SuggestionRequest* req = (SuggestionRequest*)user_data;
@@ -273,14 +265,12 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
     std::vector<std::string> final_list = get_combined_suggestions(req->query, body);
 
     if (req->is_gtk) {
-        // Populate GTK Entry Completion
         GtkEntryCompletion* completion = GTK_ENTRY_COMPLETION(req->target);
         GtkListStore* store = GTK_LIST_STORE(gtk_entry_completion_get_model(completion));
         
         gtk_list_store_clear(store);
         GtkTreeIter iter;
         for (const auto& s : final_list) {
-            // For GTK URL bar, strip the [H] tag so it looks clean
             std::string text = s;
             if(text.find("[H] ") == 0) text = text.substr(4);
             
@@ -289,7 +279,6 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
         }
         gtk_entry_completion_complete(completion);
     } else {
-        // Send to Home Page JS
         std::stringstream js_array;
         js_array << "[";
         for (size_t i = 0; i < final_list.size(); ++i) {
@@ -313,24 +302,12 @@ void fetch_suggestions(const std::string& query, bool is_gtk, gpointer target) {
     soup_session_queue_message(soup_session, msg, on_suggestion_ready, req);
 }
 
-
-// --- System Stats Helper (Preserved) ---
+// --- System Stats Helper ---
 void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
 #ifdef _WIN32
-    // Windows Implementation Placeholder
-    MEMORYSTATUSEX memInfo;
-    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
-    GlobalMemoryStatusEx(&memInfo);
-    double totalPhysMem = memInfo.ullTotalPhys;
-    double physMemUsed = memInfo.ullTotalPhys - memInfo.ullAvailPhys;
-    
-    std::stringstream ss;
-    ss.precision(1);
-    ss << std::fixed << physMemUsed / (1024*1024*1024) << " / " << totalPhysMem / (1024*1024*1024) << " GB";
-    ram_usage = ss.str();
+    ram_usage = "N/A";
     cpu_usage = 0; 
 #else
-    // Linux Implementation
     struct sysinfo memInfo;
     sysinfo(&memInfo);
     long long physMemUsed = (memInfo.totalram - memInfo.freeram) * memInfo.mem_unit;
@@ -371,7 +348,6 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     std::string json(json_str);
     g_free(json_str);
 
-    // Simple Regex JSON Parser
     auto get_json_val = [&](std::string key) -> std::string {
         std::regex re("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
         std::smatch match;
@@ -386,7 +362,7 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
 
     if (type == "search") {
         std::string query = get_json_val("query");
-        add_search_query(query); // Save to history
+        add_search_query(query); 
         std::string url = settings.search_engine + query;
         webkit_web_view_load_uri(view, url.c_str());
     }
@@ -403,16 +379,19 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
 
         save_settings(engine, theme);
         
-        // Update current view immediately
-        run_js(view, "setTheme('" + theme + "');");
-        
-        // Update all other tabs
+        // Update all tabs immediately
         if(global_window) {
              GtkNotebook* nb = get_notebook(global_window);
              int pages = gtk_notebook_get_n_pages(nb);
              for(int i=0; i<pages; i++) {
-                 WebKitWebView* v = WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(nb, i));
-                 run_js(v, "setTheme('" + theme + "');");
+                 // The page is now a VBox [Toolbar, WebView]
+                 GtkWidget* page_box = gtk_notebook_get_nth_page(nb, i);
+                 GList* children = gtk_container_get_children(GTK_CONTAINER(page_box));
+                 if(children && children->next) {
+                    WebKitWebView* v = WEBKIT_WEB_VIEW(children->next->data);
+                    run_js(v, "setTheme('" + theme + "');");
+                 }
+                 g_list_free(children);
              }
         }
     }
@@ -433,12 +412,10 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         webkit_web_view_load_uri(view, url.c_str());
     }
     else if (type == "get_history") {
-        // Send history as JSON array
         std::stringstream ss;
         ss << "[";
         for(size_t i=0; i<browsing_history.size(); ++i) {
             const auto& h = browsing_history[i];
-            // Basic escaping for JSON validity should be added here in production
             ss << "{ \"title\": \"" << h.title << "\", \"url\": \"" << h.url << "\", \"time\": \"" << h.time_str << "\" }";
             if(i < browsing_history.size()-1) ss << ",";
         }
@@ -456,78 +433,29 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
 GtkNotebook* get_notebook(GtkWidget* win) {
     return GTK_NOTEBOOK(g_object_get_data(G_OBJECT(win), "notebook"));
 }
-GtkEntry* get_url_bar(GtkWidget* win) {
-    return GTK_ENTRY(g_object_get_data(G_OBJECT(win), "url_bar"));
-}
+
 WebKitWebView* get_active_webview(GtkWidget* win) {
     GtkNotebook* nb = get_notebook(win);
-    int page = gtk_notebook_get_current_page(nb);
-    if (page == -1) return nullptr;
-    return WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(nb, page));
-}
-
-// --- Tab Logic ---
-
-// Hook to capture URL visits for history
-void on_load_changed(WebKitWebView* web_view, WebKitLoadEvent load_event, gpointer win) {
-    if (load_event == WEBKIT_LOAD_COMMITTED) {
-        const char* uri = webkit_web_view_get_uri(web_view);
-        if (uri) {
-            std::string u(uri);
-            if(u.find("file://") == std::string::npos) {
-                // It's a real web page
-                gtk_entry_set_text(get_url_bar(GTK_WIDGET(win)), uri);
-                const char* title = webkit_web_view_get_title(web_view);
-                add_history_item(u, title ? std::string(title) : "");
-            } else {
-                // It's an internal page (home/settings)
-                gtk_entry_set_text(get_url_bar(GTK_WIDGET(win)), "");
-            }
-        }
+    int page_num = gtk_notebook_get_current_page(nb);
+    if (page_num == -1) return nullptr;
+    
+    // Page is now VBox -> [Toolbar, WebView]
+    GtkWidget* page = gtk_notebook_get_nth_page(nb, page_num);
+    GList* children = gtk_container_get_children(GTK_CONTAINER(page));
+    
+    // The webview is the second item (index 1) in the VBox
+    WebKitWebView* view = nullptr;
+    if (children && children->next) {
+        view = WEBKIT_WEB_VIEW(children->next->data);
     }
-}
-
-static void on_tab_close(GtkButton*, gpointer v) { 
-    GtkWidget* view = GTK_WIDGET(v);
-    GtkWidget* win = GTK_WIDGET(g_object_get_data(G_OBJECT(view), "win"));
-    gtk_notebook_remove_page(get_notebook(win), gtk_notebook_page_num(get_notebook(win), view));
-}
-
-GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context) {
-    GtkNotebook* notebook = get_notebook(win);
-    WebKitUserContentManager* ucm = webkit_user_content_manager_new();
-    webkit_user_content_manager_register_script_message_handler(ucm, "zyro");
-    
-    GtkWidget* view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
-    g_object_set_data(G_OBJECT(view), "win", win);
-    g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
-
-    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    GtkWidget* label = gtk_label_new("New Tab");
-    GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
-    gtk_widget_set_name(close, "tab-close-btn");
-    gtk_box_pack_start(GTK_BOX(box), label, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(box), close, FALSE, FALSE, 0);
-    gtk_widget_show_all(box);
-
-    int page = gtk_notebook_append_page(notebook, view, box);
-    gtk_notebook_set_tab_reorderable(notebook, view, TRUE);
-    gtk_widget_show(view);
-    
-    // Connect History & UI Signals
-    g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), win);
-    
-    g_signal_connect(close, "clicked", G_CALLBACK(on_tab_close), view);
-    g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
-        const char* t = webkit_web_view_get_title(v); if(t) gtk_label_set_text(l, t); 
-    }), label);
-
-    gtk_notebook_set_current_page(notebook, page);
-    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
+    g_list_free(children);
     return view;
 }
 
-// --- Toolbar Events ---
+// --- Forward declaration for Tab Logic ---
+void on_incognito_clicked(GtkButton*, gpointer);
+
+// --- Toolbar Events (Per Tab) ---
 
 static void on_url_changed(GtkEditable* editable, gpointer user_data) {
     std::string text = gtk_entry_get_text(GTK_ENTRY(editable));
@@ -537,13 +465,12 @@ static void on_url_changed(GtkEditable* editable, gpointer user_data) {
     fetch_suggestions(text, true, completion);
 }
 
-static void on_url_activate(GtkEntry* e, gpointer win) {
-    WebKitWebView* v = get_active_webview(GTK_WIDGET(win));
+static void on_url_activate(GtkEntry* e, gpointer view_ptr) {
+    WebKitWebView* v = WEBKIT_WEB_VIEW(view_ptr);
     if (!v) return;
     std::string t = gtk_entry_get_text(e);
     
     if(t.find("://") == std::string::npos && t.find(".") == std::string::npos) {
-        // It's a query
         add_search_query(t);
         t = settings.search_engine + t;
     } 
@@ -558,18 +485,222 @@ static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* mode
     gchar* value;
     gtk_tree_model_get(model, iter, 0, &value, -1);
     gtk_entry_set_text(GTK_ENTRY(entry), value);
-    
-    // Trigger Activate logic manually to save search history if needed, 
-    // or just load directly. Let's trigger activate to keep logic consistent.
-    g_signal_emit_by_name(entry, "activate");
-    
+    g_signal_emit_by_name(entry, "activate"); // Trigger load
     g_free(value);
     return TRUE;
+}
+
+// --- Tab Logic ---
+
+// Hook to capture URL visits and update URL bar
+void on_load_changed(WebKitWebView* web_view, WebKitLoadEvent load_event, gpointer user_data) {
+    if (load_event == WEBKIT_LOAD_COMMITTED) {
+        const char* uri = webkit_web_view_get_uri(web_view);
+        // We stored the pointer to the entry in the webview's data
+        GtkEntry* entry = GTK_ENTRY(g_object_get_data(G_OBJECT(web_view), "entry"));
+
+        if (uri && entry) {
+            std::string u(uri);
+            if(u.find("file://") == std::string::npos) {
+                gtk_entry_set_text(entry, uri);
+                const char* title = webkit_web_view_get_title(web_view);
+                add_history_item(u, title ? std::string(title) : "");
+            } else {
+                gtk_entry_set_text(entry, ""); // Clear for internal pages
+            }
+        }
+    }
+}
+
+static void on_tab_close(GtkButton*, gpointer v_box_widget) { 
+    // v_box_widget is the main content box of the tab
+    GtkWidget* win = GTK_WIDGET(g_object_get_data(G_OBJECT(v_box_widget), "win"));
+    GtkNotebook* nb = get_notebook(win);
+    int page_num = gtk_notebook_page_num(nb, GTK_WIDGET(v_box_widget));
+    if (page_num != -1) {
+        gtk_notebook_remove_page(nb, page_num);
+    }
+}
+
+// --- Menu Helper ---
+void show_menu(GtkButton* btn, gpointer win) {
+    GtkWidget* popover = gtk_popover_new(GTK_WIDGET(btn));
+    gtk_style_context_add_class(gtk_widget_get_style_context(popover), "menu-popover");
+    
+    GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    
+    auto mk_menu_item = [&](const char* label, const char* icon_name, GCallback cb) {
+        GtkWidget* btn = gtk_button_new();
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn), "menu-item");
+        gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
+        
+        GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
+        GtkWidget* lbl = gtk_label_new(label);
+        
+        gtk_box_pack_start(GTK_BOX(box), img, FALSE, FALSE, 10);
+        gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(btn), box);
+        
+        if (cb) g_signal_connect(btn, "clicked", cb, win);
+        return btn;
+    };
+
+    auto mk_sep = [&]() {
+        GtkWidget* s = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+        gtk_widget_set_name(s, "menu-separator");
+        return s;
+    };
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Tab", "tab-new-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){ 
+        create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); 
+    })), FALSE, FALSE, 0);
+    
+    // Note: Incognito needs a forward declaration or move, implemented below
+    // gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Incognito", "user-trash-symbolic", ...), ...);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("History", "document-open-recent-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
+        create_new_tab(GTK_WIDGET(w), settings.history_url, global_context); 
+    })), FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Settings", "preferences-system-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
+        create_new_tab(GTK_WIDGET(w), settings.settings_url, global_context); 
+    })), FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Exit Zyro", "application-exit-symbolic", G_CALLBACK(gtk_main_quit)), FALSE, FALSE, 0);
+
+    gtk_widget_show_all(menu_box);
+    gtk_container_add(GTK_CONTAINER(popover), menu_box);
+    gtk_popover_popup(GTK_POPOVER(popover));
+}
+
+GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context) {
+    GtkNotebook* notebook = get_notebook(win);
+    
+    // 1. Create Web View
+    WebKitUserContentManager* ucm = webkit_user_content_manager_new();
+    webkit_user_content_manager_register_script_message_handler(ucm, "zyro");
+    
+    GtkWidget* view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
+    g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
+
+    // 2. Create Toolbar (Now Local to the Tab)
+    GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_style_context_add_class(gtk_widget_get_style_context(toolbar), "toolbar");
+
+    auto mkbtn = [](const char* icon, const char* tooltip) { 
+        GtkWidget* b = gtk_button_new_from_icon_name(icon, GTK_ICON_SIZE_BUTTON); 
+        gtk_widget_set_tooltip_text(b, tooltip); return b; 
+    };
+    
+    GtkWidget* b_back = mkbtn("go-previous-symbolic", "Back");
+    GtkWidget* b_fwd = mkbtn("go-next-symbolic", "Forward");
+    GtkWidget* b_refresh = mkbtn("view-refresh-symbolic", "Reload");
+    GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
+    GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu"); // Menu is now per-tab
+
+    // URL Entry
+    GtkWidget* url_entry = gtk_entry_new();
+    GtkEntryCompletion* completion = gtk_entry_completion_new();
+    GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
+    gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(store));
+    gtk_entry_completion_set_text_column(completion, 0);
+    gtk_entry_set_completion(GTK_ENTRY(url_entry), completion);
+
+    // Pack Toolbar
+    gtk_box_pack_start(GTK_BOX(toolbar), b_back, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_refresh, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_home, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), url_entry, TRUE, TRUE, 5);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0);
+
+    // 3. Create Container (Vertical Box: Toolbar + WebView)
+    GtkWidget* page_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    g_object_set_data(G_OBJECT(page_box), "win", win); // Link back to window
+    
+    gtk_box_pack_start(GTK_BOX(page_box), toolbar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page_box), view, TRUE, TRUE, 0);
+
+    // 4. Create Tab Header (Label + Close Button)
+    GtkWidget* tab_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    GtkWidget* label = gtk_label_new("New Tab");
+    GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
+    gtk_widget_set_name(close, "tab-close-btn");
+    
+    gtk_box_pack_start(GTK_BOX(tab_header), label, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(tab_header), close, FALSE, FALSE, 0);
+    gtk_widget_show_all(tab_header);
+
+    // 5. Connect Signals
+    
+    // Web Navigation
+    g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_back(WEBKIT_WEB_VIEW(v)); }), view);
+    g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_forward(WEBKIT_WEB_VIEW(v)); }), view);
+    g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_reload(WEBKIT_WEB_VIEW(v)); }), view);
+    g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_load_uri(WEBKIT_WEB_VIEW(v), settings.home_url.c_str()); }), view);
+    
+    // URL Bar
+    g_object_set_data(G_OBJECT(view), "entry", url_entry); // Save entry pointer in view
+    g_signal_connect(url_entry, "changed", G_CALLBACK(on_url_changed), NULL);
+    g_signal_connect(url_entry, "activate", G_CALLBACK(on_url_activate), view);
+    g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url_entry);
+    
+    // Load Events (Update URL bar & History)
+    g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), NULL);
+    
+    // Title Update
+    g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
+        const char* t = webkit_web_view_get_title(v); if(t) gtk_label_set_text(l, t); 
+    }), label);
+
+    // Menu
+    g_signal_connect(b_menu, "clicked", G_CALLBACK(+[](GtkButton* b, gpointer w){ show_menu(b, w); }), win);
+
+    // Close Tab
+    g_signal_connect(close, "clicked", G_CALLBACK(on_tab_close), page_box);
+
+    // Add to Notebook
+    int page = gtk_notebook_append_page(notebook, page_box, tab_header);
+    gtk_notebook_set_tab_reorderable(notebook, page_box, TRUE);
+    gtk_widget_show_all(page_box);
+    
+    gtk_notebook_set_current_page(notebook, page);
+    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
+    
+    return view;
 }
 
 void on_incognito_clicked(GtkButton*, gpointer) {
     WebKitWebContext* ephemeral_ctx = webkit_web_context_new_ephemeral();
     create_window(ephemeral_ctx);
+}
+
+// --- Key Press Handler (Hotkeys) ---
+gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
+    // Check for Control Key mask
+    if (event->state & GDK_CONTROL_MASK) {
+        if (event->keyval == GDK_KEY_t) {
+            // Ctrl + T : New Tab
+            create_new_tab(widget, settings.home_url, global_context);
+            return TRUE; // Event handled
+        }
+        if (event->keyval == GDK_KEY_w) {
+            // Ctrl + W : Close Current Tab
+            GtkNotebook* nb = get_notebook(widget);
+            int page = gtk_notebook_get_current_page(nb);
+            if (page != -1) {
+                gtk_notebook_remove_page(nb, page);
+                // If no tabs left, close window? Optional.
+                if (gtk_notebook_get_n_pages(nb) == 0) gtk_widget_destroy(widget);
+            }
+            return TRUE; // Event handled
+        }
+    }
+    return FALSE; // Propagate event
 }
 
 // --- Window Creation ---
@@ -590,156 +721,57 @@ void create_window(WebKitWebContext* ctx) {
 
     gtk_window_set_default_size(GTK_WINDOW(win), 1200, 800);
     
+    // Register Hotkeys
+    g_signal_connect(win, "key-press-event", G_CALLBACK(on_key_press), NULL);
+    
     // Load CSS
     std::string style_path = get_assets_path() + "style.css";
     GtkCssProvider* provider = gtk_css_provider_new();
     gtk_css_provider_load_from_path(provider, style_path.c_str(), NULL);
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
+    // Main Container
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_style_context_add_class(gtk_widget_get_style_context(toolbar), "toolbar");
     
+    // Notebook (Tabs)
     GtkWidget* nb = gtk_notebook_new();
+    // We remove the border to make it blend with the toolbar (which is now inside the pages)
     gtk_notebook_set_show_border(GTK_NOTEBOOK(nb), FALSE);
     gtk_notebook_set_scrollable(GTK_NOTEBOOK(nb), TRUE);
     g_object_set_data(G_OBJECT(win), "notebook", nb);
 
-    auto mkbtn = [](const char* icon, const char* tooltip) { 
-        GtkWidget* b = gtk_button_new_from_icon_name(icon, GTK_ICON_SIZE_BUTTON); 
-        gtk_widget_set_tooltip_text(b, tooltip); return b; 
-    };
-    
-    GtkWidget* b_back = mkbtn("go-previous-symbolic", "Back");
-    GtkWidget* b_fwd = mkbtn("go-next-symbolic", "Forward");
-    GtkWidget* b_refresh = mkbtn("view-refresh-symbolic", "Reload");
-    GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
-    GtkWidget* b_add = mkbtn("tab-new-symbolic", "New Tab");
-
-    // URL Bar with Suggestions
-    GtkWidget* url = gtk_entry_new();
-    g_object_set_data(G_OBJECT(win), "url_bar", url);
-
-    GtkEntryCompletion* completion = gtk_entry_completion_new();
-    GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
-    gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(store));
-    gtk_entry_completion_set_text_column(completion, 0);
-    gtk_entry_completion_set_popup_completion(completion, TRUE);
-    gtk_entry_completion_set_inline_completion(completion, FALSE);
-    gtk_entry_set_completion(GTK_ENTRY(url), completion);
-    
-    g_signal_connect(url, "changed", G_CALLBACK(on_url_changed), NULL);
-    g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url);
-    g_object_unref(completion);
-    
-    // --- Menu Popover ---
-    GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu");
-    GtkWidget* popover = gtk_popover_new(b_menu);
-    gtk_style_context_add_class(gtk_widget_get_style_context(popover), "menu-popover");
-    
-    GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    
-    auto mk_menu_item = [&](const char* label, const char* icon_name, GCallback cb, gpointer data) {
-        GtkWidget* btn = gtk_button_new();
-        gtk_style_context_add_class(gtk_widget_get_style_context(btn), "menu-item");
-        gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
-        
-        GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-        GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
-        GtkWidget* lbl = gtk_label_new(label);
-        
-        gtk_box_pack_start(GTK_BOX(box), img, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
-        gtk_container_add(GTK_CONTAINER(btn), box);
-        
-        if (cb) g_signal_connect(btn, "clicked", cb, data);
-        g_signal_connect_swapped(btn, "clicked", G_CALLBACK(gtk_widget_hide), popover);
-        return btn;
-    };
-
-    auto mk_sep = [&]() {
-        GtkWidget* s = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-        gtk_widget_set_name(s, "menu-separator");
-        return s;
-    };
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Tab", "tab-new-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){ 
-        create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); 
-    }), win), FALSE, FALSE, 0);
-    
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("New Incognito Window", "user-trash-symbolic", G_CALLBACK(on_incognito_clicked), NULL), FALSE, FALSE, 0);
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
-
-    // History Item
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("History", "document-open-recent-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
-        create_new_tab(GTK_WIDGET(w), settings.history_url, global_context); 
-    }), win), FALSE, FALSE, 0);
-    
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Downloads", "folder-download-symbolic", NULL, NULL), FALSE, FALSE, 0);
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Print...", "printer-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
-        WebKitWebView* v = get_active_webview(GTK_WIDGET(w));
-        if(v) run_js(v, "window.print();"); 
-    }), win), FALSE, FALSE, 0);
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Settings", "preferences-system-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
-        create_new_tab(GTK_WIDGET(w), settings.settings_url, global_context); 
-    }), win), FALSE, FALSE, 0);
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_sep(), FALSE, FALSE, 0);
-
-    gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Exit Zyro", "application-exit-symbolic", G_CALLBACK(gtk_main_quit), NULL), FALSE, FALSE, 0);
-
-    gtk_widget_show_all(menu_box);
-    gtk_container_add(GTK_CONTAINER(popover), menu_box);
-    g_signal_connect(b_menu, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p){ 
-        gtk_popover_popup(GTK_POPOVER(p)); 
-    }), popover);
-    
-    // --- Packing ---
-    gtk_box_pack_start(GTK_BOX(toolbar), b_back, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), b_refresh, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), b_home, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), url, TRUE, TRUE, 5);
-    gtk_box_pack_start(GTK_BOX(toolbar), b_add, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0); 
-
-    gtk_box_pack_start(GTK_BOX(box), toolbar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(win), box);
 
-    // Signals
-    g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_back(v); }), win);
-    g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_go_forward(v); }), win);
-    g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_reload(v); }), win);
-    g_signal_connect(b_home, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ WebKitWebView* v = get_active_webview(GTK_WIDGET(w)); if(v) webkit_web_view_load_uri(v, settings.home_url.c_str()); }), win);
-    g_signal_connect(b_add, "clicked", G_CALLBACK(+[](GtkButton*, gpointer w){ create_new_tab(GTK_WIDGET(w), settings.home_url, global_context); }), win);
-    g_signal_connect(url, "activate", G_CALLBACK(on_url_activate), win);
     g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     
     gtk_widget_show_all(win);
+    
+    // Open Initial Tab
     create_new_tab(win, settings.home_url, ctx);
 }
 
-// Background stats updater
 static gboolean update_home_stats(gpointer data) {
     if(!global_window) return TRUE;
     GtkNotebook* notebook = get_notebook(global_window);
     if (!notebook) return TRUE;
+    
     int pages = gtk_notebook_get_n_pages(notebook);
     for (int i=0; i<pages; i++) {
-        WebKitWebView* view = WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(notebook, i));
-        const char* uri = webkit_web_view_get_uri(view);
-        if (uri && std::string(uri).find("home.html") != std::string::npos) {
-            int cpu; std::string ram;
-            get_sys_stats(cpu, ram);
-            std::string script = "updateStats('" + std::to_string(cpu) + "', '" + ram + "');";
-            run_js(view, script);
+        GtkWidget* page_box = gtk_notebook_get_nth_page(notebook, i);
+        GList* children = gtk_container_get_children(GTK_CONTAINER(page_box));
+        
+        if (children && children->next) {
+            WebKitWebView* view = WEBKIT_WEB_VIEW(children->next->data);
+            const char* uri = webkit_web_view_get_uri(view);
+            if (uri && std::string(uri).find("home.html") != std::string::npos) {
+                int cpu; std::string ram;
+                get_sys_stats(cpu, ram);
+                std::string script = "updateStats('" + std::to_string(cpu) + "', '" + ram + "');";
+                run_js(view, script);
+            }
         }
+        g_list_free(children);
     }
     return TRUE; 
 }
