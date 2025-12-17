@@ -4,31 +4,59 @@
     <meta charset="UTF-8">
     <title>Settings</title>
     <style>
-        body { background: #1a1b1e; color: #e8eaed; font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
+        :root { --bg: #1a1b1e; --panel: #202124; --text: #e8eaed; }
+        body.theme-light { --bg: #f1f3f4; --panel: #ffffff; --text: #202124; }
+        
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; transition: background 0.3s; }
         h1 { border-bottom: 1px solid #333; padding-bottom: 15px; }
-        .setting-group { margin-bottom: 30px; background: #202124; padding: 20px; border-radius: 12px; }
+        .setting-group { margin-bottom: 30px; background: var(--panel); padding: 20px; border-radius: 12px; }
         label { display: block; margin-bottom: 10px; font-weight: bold; }
         p { color: #9aa0a6; font-size: 14px; margin-top: 0; }
         
         select { 
-            width: 100%; padding: 10px; background-color: #303134; color: white; 
-            border: 1px solid #444; border-radius: 6px; outline: none; 
-            appearance: none; -webkit-appearance: none; cursor: pointer;
+            width: 100%; 
+            padding: 10px; 
+            background-color: #303134; 
+            color: #e8eaed; 
+            border: 1px solid #444; 
+            border-radius: 6px; 
+            outline: none; 
+            cursor: pointer;
+            appearance: none; 
+            -webkit-appearance: none;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="white" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+            background-repeat: no-repeat;
+            background-position: right 10px top 50%;
+        }
+        
+        /* Force options to have dark background */
+        select option {
+            background-color: #303134;
+            color: #e8eaed;
         }
         
         button { 
             background: #8ab4f8; color: #000; border: none; padding: 10px 20px; 
             border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 20px; 
-            appearance: none; -webkit-appearance: none;
         }
         button:hover { opacity: 0.9; }
 
-        /* Danger Zone for Clear Cache */
         .danger-zone { border: 1px solid #5f3b3b; }
         .btn-danger { background: #e06c75; color: white; margin-top: 0; }
+
+        /* Custom Toast Notification */
+        #toast {
+            visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center;
+            border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px;
+            transform: translateX(-50%); box-shadow: 0 4px 15px rgba(0,0,0,0.5); font-size: 16px;
+        }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+        
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
     </style>
 </head>
-<body>
+<body class="theme-dark">
     <h1>Settings</h1>
 
     <div class="setting-group">
@@ -58,27 +86,47 @@
         <button class="btn-danger" onclick="clearCache()">Clear Cache & Cookies</button>
     </div>
 
+    <div id="toast">Settings Saved!</div>
+
     <script>
+        function showToast(msg) {
+            var x = document.getElementById("toast");
+            x.innerText = msg;
+            x.className = "show";
+            setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
+        }
+
+        function setTheme(themeName) {
+            document.body.className = 'theme-' + themeName;
+            // Also update the dropdown to match
+            document.getElementById('theme').value = themeName;
+        }
+
         function saveSettings() {
             const engine = document.getElementById('engine').value;
             const theme = document.getElementById('theme').value;
+            
+            // Immediate UI update (optimistic)
+            setTheme(theme);
+
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({
                 type: 'save_settings',
                 engine: engine,
                 theme: theme
             }));
-            alert('Settings Saved!');
+            
+            showToast('Settings Saved!');
         }
 
         function clearCache() {
-            if(confirm("Are you sure you want to clear all cache and cookies?")) {
+            if(confirm("Are you sure? This cannot be undone.")) {
                 window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'clear_cache' }));
             }
         }
 
         function loadCurrentSettings(engine, theme) {
             document.getElementById('engine').value = engine;
-            document.getElementById('theme').value = theme;
+            setTheme(theme);
         }
 
         window.onload = () => {

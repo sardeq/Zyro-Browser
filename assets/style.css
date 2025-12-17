@@ -94,13 +94,9 @@ popover button:hover { background-color: #3c4043; }
     border: 1px solid #444;
     padding: 5px;
     border-radius: 8px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
 }
 
 .menu-popover button {
-    display: block;
-    width: 100%;
-    text-align: left;
     background: transparent;
     border: none;
     color: #e8eaed;
@@ -108,7 +104,7 @@ popover button:hover { background-color: #3c4043; }
     border-radius: 4px;
     font-size: 14px;
     min-width: 200px;
-    min-height: auto;
+    min-height: 30px;
 }
 
 .menu-popover button:hover {
@@ -117,7 +113,7 @@ popover button:hover { background-color: #3c4043; }
 }
 
 .menu-separator {
-    height: 1px;
+    min-height: 1px;
     background-color: #444;
     margin: 5px 0;
 }

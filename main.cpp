@@ -7,6 +7,7 @@
 #include <vector>
 #include <sstream>
 #include <memory>
+#include <regex>
 
 // --- Debug & Globals ---
 #define LOG(msg) std::cout << "[DEBUG] " << msg << std::endl
@@ -23,13 +24,14 @@ GtkWidget* global_window = nullptr;
 
 void create_window(WebKitWebContext* ctx);
 
+GtkNotebook* get_notebook(GtkWidget* win);
+
 // --- Path Helpers ---
 std::string get_assets_path() {
     char* cwd = g_get_current_dir();
     std::string current(cwd);
     g_free(cwd);
 
-    // 1. Check current directory (e.g. if running from project root)
     std::string local_assets = current + "/assets/";
     if (g_file_test(local_assets.c_str(), G_FILE_TEST_IS_DIR)) {
         return local_assets;
@@ -86,15 +88,29 @@ void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
 
 // --- Settings Management ---
 void load_settings() {
+    std::string config_path = get_config_path();
+    // Debug output to see where it's looking
+    std::cout << "[INFO] Loading settings from: " << config_path << std::endl;
+
     GKeyFile* key_file = g_key_file_new();
-    if (g_key_file_load_from_file(key_file, get_config_path().c_str(), G_KEY_FILE_NONE, NULL)) {
+    if (g_key_file_load_from_file(key_file, config_path.c_str(), G_KEY_FILE_NONE, NULL)) {
         gchar* engine = g_key_file_get_string(key_file, "General", "search_engine", NULL);
-        if (engine) { settings.search_engine = engine; g_free(engine); }
+        if (engine) { 
+            settings.search_engine = engine; 
+            g_free(engine); 
+        }
         
         gchar* theme = g_key_file_get_string(key_file, "General", "theme", NULL);
-        if (theme) { settings.theme = theme; g_free(theme); }
+        if (theme) { 
+            settings.theme = theme; 
+            g_free(theme); 
+        }
+        std::cout << "[INFO] Settings Loaded -> Theme: " << settings.theme << std::endl;
+    } else {
+        std::cout << "[INFO] No settings file found, using defaults." << std::endl;
     }
     g_key_file_free(key_file);
+    
     std::string base = get_assets_path();
     settings.home_url = "file://" + base + "home.html";
     settings.settings_url = "file://" + base + "settings.html";
@@ -103,14 +119,24 @@ void load_settings() {
 void save_settings(const std::string& engine, const std::string& theme) {
     settings.search_engine = engine;
     settings.theme = theme;
+    
     GKeyFile* key_file = g_key_file_new();
     g_key_file_set_string(key_file, "General", "search_engine", settings.search_engine.c_str());
     g_key_file_set_string(key_file, "General", "theme", settings.theme.c_str());
     
     std::string path = get_config_path();
+    
+    // Ensure the directory exists (Linux specific)
     std::string dir = path.substr(0, path.find_last_of('/'));
-    g_mkdir_with_parents(dir.c_str(), 0755);
-    g_key_file_save_to_file(key_file, path.c_str(), NULL);
+    if (g_mkdir_with_parents(dir.c_str(), 0755) == -1) {
+        std::cerr << "[ERROR] Failed to create config directory: " << dir << std::endl;
+    }
+
+    if (!g_key_file_save_to_file(key_file, path.c_str(), NULL)) {
+        std::cerr << "[ERROR] Failed to write settings to file!" << std::endl;
+    } else {
+        std::cout << "[INFO] Settings Saved successfully to: " << path << std::endl;
+    }
     g_key_file_free(key_file);
 }
 
@@ -119,57 +145,82 @@ void run_js(WebKitWebView* view, const std::string& script) {
     webkit_web_view_evaluate_javascript(view, script.c_str(), -1, NULL, NULL, NULL, NULL, NULL);
 }
 
-// --- JS Communication Handler ---
 static void on_script_message(WebKitUserContentManager* manager, WebKitJavascriptResult* res, gpointer user_data) {
     JSCValue* value = webkit_javascript_result_get_js_value(res);
     char* json_str = jsc_value_to_string(value);
     std::string json(json_str);
     g_free(json_str);
+
+    // DEBUG: Print exactly what C++ receives
+    std::cout << "[DEBUG] JS Message: " << json << std::endl;
     
-    if (json.find("search") != std::string::npos) {
-        size_t q_pos = json.find("query\":\"");
-        if (q_pos != std::string::npos) {
-            std::string query = json.substr(q_pos + 8);
-            query = query.substr(0, query.find("\""));
+    // Regex Helper
+    auto get_json_val = [&](std::string key) -> std::string {
+        std::regex re("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
+        std::smatch match;
+        if (std::regex_search(json, match, re)) {
+            return match[1].str();
+        }
+        return "";
+    };
+
+    // 1. EXTRACT THE TYPE FIRST
+    std::string type = get_json_val("type");
+
+    // 2. SWITCH BASED ON TYPE
+    if (type == "search") {
+        std::string query = get_json_val("query");
+        if (!query.empty()) {
             WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
             std::string url = settings.search_engine + query;
             webkit_web_view_load_uri(view, url.c_str());
         }
     } 
-    else if (json.find("save_settings") != std::string::npos) {
-        std::string engine = "https://www.google.com/search?q=";
-        std::string theme = "dark";
-        size_t eng_pos = json.find("\"engine\":\"");
-        if (eng_pos != std::string::npos) {
-            size_t start = eng_pos + 10;
-            size_t end = json.find("\"", start);
-            if (end != std::string::npos) engine = json.substr(start, end - start);
+    else if (type == "save_settings") {
+        std::string engine = get_json_val("engine");
+        std::string theme = get_json_val("theme");
+        
+        std::cout << "[DEBUG] Parsed Engine: " << engine << std::endl;
+        std::cout << "[DEBUG] Parsed Theme: " << theme << std::endl;
+
+        // Validation logic
+        if (engine.empty()) {
+            std::cerr << "[WARN] Failed to parse engine, keeping old value." << std::endl;
+            engine = settings.search_engine;
         }
-        size_t theme_pos = json.find("\"theme\":\"");
-        if (theme_pos != std::string::npos) {
-            size_t start = theme_pos + 9;
-            size_t end = json.find("\"", start);
-            if (end != std::string::npos) theme = json.substr(start, end - start);
-        }
+        if (theme.empty()) theme = settings.theme;
+
         save_settings(engine, theme);
+        
+        // Update UI immediately
+        WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+        std::string script = "setTheme('" + theme + "');";
+        run_js(view, script);
+        
+        // Update other tabs
+        if(global_window) {
+             GtkNotebook* nb = get_notebook(global_window);
+             int pages = gtk_notebook_get_n_pages(nb);
+             for(int i=0; i<pages; i++) {
+                 WebKitWebView* v = WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(nb, i));
+                 run_js(v, script);
+             }
+        }
     }
-    else if (json.find("get_theme") != std::string::npos) {
+    else if (type == "get_theme") {
         WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
         run_js(view, "setTheme('" + settings.theme + "');");
     }
-    else if (json.find("get_settings") != std::string::npos) {
+    else if (type == "get_settings") {
         WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
         std::string script = "loadCurrentSettings('" + settings.search_engine + "', '" + settings.theme + "');";
         run_js(view, script);
     }
-    else if (json.find("clear_cache") != std::string::npos) {
-        // Clear HTTP cache and Cookies
+    else if (type == "clear_cache") {
         WebKitWebsiteDataManager* mgr = webkit_web_context_get_website_data_manager(global_context);
         webkit_website_data_manager_clear(mgr, WEBKIT_WEBSITE_DATA_ALL, 0, NULL, NULL, NULL);
-        LOG("Cache and Cookies Cleared");
-        
         WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
-        run_js(view, "alert('Cache Cleared Successfully!');");
+        run_js(view, "showToast('Cache Cleared');"); 
     }
 }
 
