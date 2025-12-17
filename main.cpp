@@ -182,11 +182,14 @@ struct HistoryItem {
     std::string time_str;
 };
 
+// --- FIX 1: Added 'id' field ---
 struct DownloadItem {
+    guint64 id;
     std::string filename;
     std::string url;
     std::string status;
     double progress;
+    WebKitDownload* webkit_download;
 };
 
 struct PassItem {
@@ -216,10 +219,19 @@ SoupSession* soup_session = nullptr;
 // In-memory cache for fast access
 std::vector<HistoryItem> browsing_history;
 std::vector<std::string> search_history;
-std::vector<DownloadItem> downloads_list;
+// --- FIX 2: Removed duplicate definition, kept one ---
+std::vector<DownloadItem> downloads_list; 
 std::vector<PassItem> saved_passwords;
 
+guint64 global_download_id_counter = 1;
+
 std::string global_master_password = "";
+
+GtkWidget* global_downloads_popover = nullptr; 
+GtkWidget* global_downloads_list_box = nullptr; 
+GtkWidget* global_downloads_btn = nullptr; 
+
+void update_downloads_popup();
 
 // --- Forward Declarations ---
 void create_window(WebKitWebContext* ctx);
@@ -573,28 +585,40 @@ void clear_all_history() {
     save_searches_to_disk();
 }
 
+int find_download_index(guint64 id) {
+    for(size_t i=0; i<downloads_list.size(); ++i) {
+        if (downloads_list[i].id == id) return i;
+    }
+    return -1;
+}
+
 static void on_download_received_data(WebKitDownload* download, guint64 data_length, gpointer user_data) {
-    int* idx_ptr = (int*)user_data;
-    if(*idx_ptr >= 0 && *idx_ptr < downloads_list.size()) {
+    guint64 id = GPOINTER_TO_UINT(user_data);
+    int idx = find_download_index(id);
+    if(idx != -1) {
         double p = webkit_download_get_estimated_progress(download);
-        downloads_list[*idx_ptr].progress = p * 100.0;
-        downloads_list[*idx_ptr].status = "Downloading";
+        downloads_list[idx].progress = p * 100.0;
+        downloads_list[idx].status = "Downloading";
     }
 }
 
 static void on_download_finished(WebKitDownload* download, gpointer user_data) {
-    int* idx_ptr = (int*)user_data;
-    if(*idx_ptr >= 0 && *idx_ptr < downloads_list.size()) {
-        downloads_list[*idx_ptr].progress = 100.0;
-        downloads_list[*idx_ptr].status = "Completed";
+    guint64 id = GPOINTER_TO_UINT(user_data);
+    int idx = find_download_index(id);
+    if(idx != -1) {
+        downloads_list[idx].progress = 100.0;
+        downloads_list[idx].status = "Completed";
     }
-    delete idx_ptr; 
 }
 
 static void on_download_failed(WebKitDownload* download, GError* error, gpointer user_data) {
-    int* idx_ptr = (int*)user_data;
-    if(*idx_ptr >= 0 && *idx_ptr < downloads_list.size()) {
-        downloads_list[*idx_ptr].status = "Failed";
+    guint64 id = GPOINTER_TO_UINT(user_data);
+    int idx = find_download_index(id);
+    if(idx != -1) {
+        if (g_error_matches(error, WEBKIT_DOWNLOAD_ERROR, WEBKIT_DOWNLOAD_ERROR_CANCELLED_BY_USER))
+             downloads_list[idx].status = "Cancelled";
+        else
+             downloads_list[idx].status = "Failed";
     }
 }
 
@@ -609,24 +633,29 @@ static gboolean on_decide_destination(WebKitDownload *download, gchar *suggested
     webkit_download_set_destination(download, file_uri.c_str());
     
     DownloadItem item;
+    item.id = global_download_id_counter++;
     item.filename = filename;
     item.url = webkit_uri_request_get_uri(webkit_download_get_request(download));
     item.progress = 0.0;
     item.status = "Starting...";
+    item.webkit_download = download;
     
     downloads_list.push_back(item);
     
-    int* idx = new int(downloads_list.size() - 1);
-    
-    g_signal_connect(download, "received-data", G_CALLBACK(on_download_received_data), idx);
-    g_signal_connect(download, "failed", G_CALLBACK(on_download_failed), idx);
-    g_signal_connect(download, "finished", G_CALLBACK(on_download_finished), idx);
+    g_signal_connect(download, "received-data", G_CALLBACK(on_download_received_data), GUINT_TO_POINTER(item.id));
+    g_signal_connect(download, "failed", G_CALLBACK(on_download_failed), GUINT_TO_POINTER(item.id));
+    g_signal_connect(download, "finished", G_CALLBACK(on_download_finished), GUINT_TO_POINTER(item.id));
     
     return TRUE; 
 }
 
 static void on_download_started(WebKitWebContext *context, WebKitDownload *download, gpointer user_data) {
     g_signal_connect(download, "decide-destination", G_CALLBACK(on_decide_destination), NULL);
+    
+    if (global_downloads_btn) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(global_downloads_btn), TRUE); // Auto open popover
+    }
+    update_downloads_popup();
 }
 
 // --- Suggestion Logic ---
@@ -887,7 +916,8 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     else if (type == "get_downloads") {
         std::stringstream ss; ss << "[";
         for(size_t i=0; i<downloads_list.size(); ++i) {
-            ss << "{ \"filename\": \"" << downloads_list[i].filename << "\", "
+            ss << "{ \"id\": " << downloads_list[i].id << ", "
+               << "\"filename\": \"" << downloads_list[i].filename << "\", "
                << "\"url\": \"" << downloads_list[i].url << "\", "
                << "\"status\": \"" << downloads_list[i].status << "\", "
                << "\"progress\": " << downloads_list[i].progress << " }";
@@ -896,8 +926,17 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         ss << "]";
         run_js(view, "renderDownloads('" + ss.str() + "');");
     }
+    else if (type == "stop_download") {
+        int id = get_json_int("id");
+        int idx = find_download_index((guint64)id);
+        if (idx != -1 && downloads_list[idx].status == "Downloading") {
+            webkit_download_cancel(downloads_list[idx].webkit_download);
+        }
+    }
     else if (type == "clear_downloads") {
-        downloads_list.clear();
+        auto it = std::remove_if(downloads_list.begin(), downloads_list.end(), 
+            [](const DownloadItem& i){ return i.status != "Downloading"; });
+        downloads_list.erase(it, downloads_list.end());
     }
     else if (type == "get_passwords") {
         std::stringstream ss; ss << "[";
@@ -1267,19 +1306,93 @@ void show_menu(GtkButton* btn, gpointer win) {
 }
 
 static gboolean on_decide_policy(WebKitWebView* v, WebKitPolicyDecision* decision, WebKitPolicyDecisionType type, gpointer win) {
-    if (type == WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION) {
-        WebKitNavigationAction* action = webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(decision));
-        
-        if (webkit_navigation_action_get_mouse_button(action) == 2) {
-            WebKitURIRequest* req = webkit_navigation_action_get_request(action);
-            const char* uri = webkit_uri_request_get_uri(req);
-            
-            create_new_tab(GTK_WIDGET(win), uri, global_context);
-            webkit_policy_decision_ignore(decision);
-            return TRUE;
+    switch (type) {
+        case WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION: {
+            WebKitNavigationAction* action = webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(decision));
+            if (webkit_navigation_action_get_mouse_button(action) == 2) {
+                WebKitURIRequest* req = webkit_navigation_action_get_request(action);
+                create_new_tab(GTK_WIDGET(win), webkit_uri_request_get_uri(req), global_context);
+                webkit_policy_decision_ignore(decision);
+                return TRUE;
+            }
+            break;
         }
+        case WEBKIT_POLICY_DECISION_TYPE_RESPONSE: {
+            WebKitResponsePolicyDecision* r_decision = WEBKIT_RESPONSE_POLICY_DECISION(decision);
+            if (!webkit_response_policy_decision_is_mime_type_supported(r_decision)) {
+                webkit_policy_decision_download(decision);
+                return TRUE;
+            }
+            break;
+        }
+        default: break;
     }
     return FALSE;
+}
+
+void update_downloads_popup() {
+    if (!global_downloads_list_box) return;
+
+    GList* children = gtk_container_get_children(GTK_CONTAINER(global_downloads_list_box));
+    for (GList* iter = children; iter != NULL; iter = g_list_next(iter))
+        gtk_widget_destroy(GTK_WIDGET(iter->data));
+    g_list_free(children);
+
+    if (downloads_list.empty()) {
+        GtkWidget* lbl = gtk_label_new("No recent downloads");
+        gtk_widget_set_opacity(lbl, 0.6);
+        gtk_box_pack_start(GTK_BOX(global_downloads_list_box), lbl, FALSE, FALSE, 10);
+    }
+
+    int start = std::max(0, (int)downloads_list.size() - 5);
+    for (int i = (int)downloads_list.size() - 1; i >= start; --i) {
+        const auto& item = downloads_list[i];
+
+        GtkWidget* row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        GtkWidget* top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        
+        GtkWidget* name = gtk_label_new(item.filename.c_str());
+        gtk_label_set_xalign(GTK_LABEL(name), 0);
+        gtk_label_set_ellipsize(GTK_LABEL(name), PANGO_ELLIPSIZE_END);
+        
+        GtkWidget* status_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        GtkWidget* status = gtk_label_new(item.status.c_str());
+        gtk_widget_set_opacity(status, 0.7);
+        gtk_box_pack_start(GTK_BOX(status_box), status, FALSE, FALSE, 0);
+
+        // Add Stop Button if downloading
+        if (item.status == "Downloading") {
+            GtkWidget* stop_btn = gtk_button_new_from_icon_name("process-stop-symbolic", GTK_ICON_SIZE_MENU);
+            gtk_widget_set_tooltip_text(stop_btn, "Stop Download");
+            gtk_button_set_relief(GTK_BUTTON(stop_btn), GTK_RELIEF_NONE);
+            g_signal_connect(stop_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer id_ptr){
+                guint64 id = GPOINTER_TO_UINT(id_ptr);
+                int idx = find_download_index(id);
+                if(idx != -1) webkit_download_cancel(downloads_list[idx].webkit_download);
+            }), GUINT_TO_POINTER(item.id));
+            gtk_box_pack_start(GTK_BOX(status_box), stop_btn, FALSE, FALSE, 0);
+        }
+
+        gtk_box_pack_start(GTK_BOX(top), name, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(top), status_box, FALSE, FALSE, 0);
+
+        GtkWidget* pb = gtk_progress_bar_new();
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(pb), item.progress / 100.0);
+        
+        gtk_box_pack_start(GTK_BOX(row), top, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(row), pb, FALSE, FALSE, 0);
+        
+        gtk_box_pack_start(GTK_BOX(global_downloads_list_box), row, FALSE, FALSE, 5);
+        if(i > start) gtk_box_pack_start(GTK_BOX(global_downloads_list_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
+    }
+    gtk_widget_show_all(global_downloads_list_box);
+}
+
+static gboolean refresh_download_popup_timer(gpointer) {
+    if (global_downloads_popover && gtk_widget_get_visible(global_downloads_popover)) {
+        update_downloads_popup();
+    }
+    return TRUE; 
 }
 
 GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context) {
@@ -1287,7 +1400,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     
     WebKitUserContentManager* ucm = webkit_user_content_manager_new();
     webkit_user_content_manager_register_script_message_handler(ucm, "zyro");
-    
     GtkWidget* view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
     g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
 
@@ -1305,6 +1417,52 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
     GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu"); 
 
+    // --- Downloads Button & Popover (Fixed Crash) ---
+    GtkWidget* b_downloads = gtk_toggle_button_new(); 
+    GtkWidget* dl_icon = gtk_image_new_from_icon_name("folder-download-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_container_add(GTK_CONTAINER(b_downloads), dl_icon);
+    gtk_widget_set_tooltip_text(b_downloads, "Downloads");
+    gtk_widget_set_name(b_downloads, "toolbar-btn"); 
+    
+    GtkWidget* dl_popover = gtk_popover_new(b_downloads);
+    gtk_popover_set_position(GTK_POPOVER(dl_popover), GTK_POS_BOTTOM);
+    
+    GtkWidget* pop_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    g_object_set(pop_box, "margin", 10, "width-request", 300, NULL);
+    
+    GtkWidget* pop_header = gtk_label_new("<b>Downloads</b>");
+    gtk_label_set_use_markup(GTK_LABEL(pop_header), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(pop_header), 0);
+    
+    GtkWidget* list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget* full_page_link = gtk_link_button_new_with_label(settings.downloads_url.c_str(), "View All Downloads");
+
+    gtk_box_pack_start(GTK_BOX(pop_box), pop_header, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(pop_box), list_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(pop_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
+    gtk_box_pack_start(GTK_BOX(pop_box), full_page_link, FALSE, FALSE, 0);
+    
+    gtk_container_add(GTK_CONTAINER(dl_popover), pop_box);
+    gtk_widget_show_all(pop_box);
+
+    // Manual Toggle Logic (Replaces invalid MenuButton cast)
+    g_signal_connect(b_downloads, "toggled", G_CALLBACK(+[](GtkToggleButton* btn, gpointer pop){
+        if (gtk_toggle_button_get_active(btn)) {
+            update_downloads_popup(); 
+            gtk_popover_popup(GTK_POPOVER(pop));
+        } else {
+            gtk_popover_popdown(GTK_POPOVER(pop));
+        }
+    }), dl_popover);
+    
+    g_signal_connect(dl_popover, "closed", G_CALLBACK(+[](GtkPopover*, gpointer btn){
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), FALSE);
+    }), b_downloads);
+
+    global_downloads_btn = b_downloads;
+    global_downloads_popover = dl_popover;
+    global_downloads_list_box = list_box;
+
     GtkWidget* url_entry = gtk_entry_new();
     GtkEntryCompletion* completion = gtk_entry_completion_new();
     GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
@@ -1316,7 +1474,9 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_refresh, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_home, FALSE, FALSE, 0);
+    
     gtk_box_pack_start(GTK_BOX(toolbar), url_entry, TRUE, TRUE, 5);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_downloads, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0);
 
     // Bookmarks Bar
@@ -1479,8 +1639,6 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
     return FALSE; 
 }
 
-// --- Window Creation ---
-
 void create_window(WebKitWebContext* ctx) {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
@@ -1548,6 +1706,8 @@ int main(int argc, char** argv) {
     init_security(); // Auto-unlocks using OS Keyring
     load_data();
     create_window(global_context);
+
+    g_timeout_add(500, refresh_download_popup_timer, NULL);
 
     g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
     g_timeout_add(1000, update_home_stats, NULL);

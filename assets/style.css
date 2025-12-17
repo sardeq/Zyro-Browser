@@ -148,3 +148,17 @@ box.bookmarks-bar {
 entry image.secondary {
     color: #8ab4f8;
 }
+
+
+#toolbar-btn {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #9aa0a6;
+    padding: 6px;
+    border-radius: 50%;
+}
+#toolbar-btn:checked {
+    background-color: #3c4043;
+    color: #8ab4f8; /* Active color */
+}
