@@ -1049,6 +1049,22 @@ void show_menu(GtkButton* btn, gpointer win) {
     gtk_popover_popup(GTK_POPOVER(popover));
 }
 
+static gboolean on_decide_policy(WebKitWebView* v, WebKitPolicyDecision* decision, WebKitPolicyDecisionType type, gpointer win) {
+    if (type == WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION) {
+        WebKitNavigationAction* action = webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(decision));
+        
+        if (webkit_navigation_action_get_mouse_button(action) == 2) {
+            WebKitURIRequest* req = webkit_navigation_action_get_request(action);
+            const char* uri = webkit_uri_request_get_uri(req);
+            
+            create_new_tab(GTK_WIDGET(win), uri, global_context);
+            webkit_policy_decision_ignore(decision);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context) {
     GtkNotebook* notebook = get_notebook(win);
     
@@ -1117,6 +1133,13 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url_entry);
     
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), NULL);
+
+    g_signal_connect(view, "notify::uri", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, gpointer){ 
+        GtkEntry* e = GTK_ENTRY(g_object_get_data(G_OBJECT(v), "entry"));
+        update_url_bar(v, e);
+    }), NULL);
+
+    g_signal_connect(view, "decide-policy", G_CALLBACK(on_decide_policy), win);
     
     g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
         const char* t = webkit_web_view_get_title(v); if(t) gtk_label_set_text(l, t); 
@@ -1142,21 +1165,69 @@ void on_incognito_clicked(GtkButton*, gpointer) {
 
 // --- Key Press Handler ---
 gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
+    // Get Active Tab Data
+    WebKitWebView* view = get_active_webview(widget);
+    GtkNotebook* nb = get_notebook(widget);
+    GtkEntry* url_entry = nullptr;
+    if (view) url_entry = GTK_ENTRY(g_object_get_data(G_OBJECT(view), "entry"));
+
+    // --- CTRL Shortcuts ---
     if (event->state & GDK_CONTROL_MASK) {
-        if (event->keyval == GDK_KEY_t) {
-            create_new_tab(widget, settings.home_url, global_context);
-            return TRUE; 
-        }
-        if (event->keyval == GDK_KEY_w) {
-            GtkNotebook* nb = get_notebook(widget);
-            int page = gtk_notebook_get_current_page(nb);
-            if (page != -1) {
-                gtk_notebook_remove_page(nb, page);
-                if (gtk_notebook_get_n_pages(nb) == 0) gtk_widget_destroy(widget);
+        switch (event->keyval) {
+            case GDK_KEY_t: 
+                create_new_tab(widget, settings.home_url, global_context); 
+                return TRUE;
+            case GDK_KEY_w: {
+                int page = gtk_notebook_get_current_page(nb);
+                if (page != -1) {
+                    gtk_notebook_remove_page(nb, page);
+                    if (gtk_notebook_get_n_pages(nb) == 0) gtk_widget_destroy(widget);
+                }
+                return TRUE;
             }
-            return TRUE; 
+            case GDK_KEY_r: // Reload
+            case GDK_KEY_F5:
+                if (view) webkit_web_view_reload(view);
+                return TRUE;
+            case GDK_KEY_l: // Focus URL Bar
+                if (url_entry) gtk_widget_grab_focus(GTK_WIDGET(url_entry));
+                return TRUE;
+            case GDK_KEY_Tab: 
+            case GDK_KEY_Page_Down: // Next Tab
+                if (nb) {
+                    int curr = gtk_notebook_get_current_page(nb);
+                    int last = gtk_notebook_get_n_pages(nb) - 1;
+                    gtk_notebook_set_current_page(nb, (curr == last) ? 0 : curr + 1);
+                }
+                return TRUE;
+            case GDK_KEY_Page_Up: // Prev Tab
+                if (nb) {
+                    int curr = gtk_notebook_get_current_page(nb);
+                    int last = gtk_notebook_get_n_pages(nb) - 1;
+                    gtk_notebook_set_current_page(nb, (curr == 0) ? last : curr - 1);
+                }
+                return TRUE;
         }
     }
+
+    // --- ALT Shortcuts ---
+    if (event->state & GDK_MOD1_MASK) {
+        switch (event->keyval) {
+            case GDK_KEY_Left:
+                if (view && webkit_web_view_can_go_back(view)) webkit_web_view_go_back(view);
+                return TRUE;
+            case GDK_KEY_Right:
+                if (view && webkit_web_view_can_go_forward(view)) webkit_web_view_go_forward(view);
+                return TRUE;
+        }
+    }
+    
+    // --- F5 (No Modifier) ---
+    if (event->keyval == GDK_KEY_F5 && view) {
+        webkit_web_view_reload(view);
+        return TRUE;
+    }
+
     return FALSE; 
 }
 
