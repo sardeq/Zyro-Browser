@@ -410,7 +410,8 @@ void create_window(WebKitWebContext* ctx) {
     // Group 3: Tools
     gtk_box_pack_start(GTK_BOX(menu_box), mk_menu_item("Print...", "printer-symbolic", G_CALLBACK(+[](GtkButton*, gpointer w){
         WebKitWebView* v = get_active_webview(GTK_WIDGET(w));
-        if(v) webkit_web_view_run_javascript(v, "window.print();", NULL, NULL, NULL);
+        // FIX: Use your existing run_js helper instead of the deprecated function
+        if(v) run_js(v, "window.print();"); 
     }), win), FALSE, FALSE, 0);
 
     // Re-use your existing on_settings_clicked
