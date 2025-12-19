@@ -75,12 +75,11 @@ std::vector<std::string> parse_remote_suggestions(const std::string& json) {
     return results;
 }
 
-std::vector<std::string> get_combined_suggestions(const std::string& query, const std::string& remote_json) {
+std::vector<std::string> get_combined_suggestions(const std::string& query, const std::string& remote_json, bool include_urls) {
     std::vector<std::string> combined;
     std::string q_lower = query;
     std::transform(q_lower.begin(), q_lower.end(), q_lower.begin(), ::tolower);
 
-    // 1. Check Search History
     int count = 0;
     for (auto it = search_history.rbegin(); it != search_history.rend(); ++it) {
         if (count > 2) break; 
@@ -93,27 +92,27 @@ std::vector<std::string> get_combined_suggestions(const std::string& query, cons
         }
     }
 
-    // 2. Check Browsing History (Past Links)
-    int hist_links_count = 0;
-    for (auto it = browsing_history.rbegin(); it != browsing_history.rend(); ++it) {
-        if (hist_links_count > 4) break; 
-        
-        std::string u_lower = it->url;
-        std::transform(u_lower.begin(), u_lower.end(), u_lower.begin(), ::tolower);
-        
-        // Match if URL contains query
-        if (u_lower.find(q_lower) != std::string::npos) {
-            bool already_added = false;
-            for(const auto& s : combined) if(s == it->url) already_added = true;
+    if (include_urls) {
+        int hist_links_count = 0;
+        for (auto it = browsing_history.rbegin(); it != browsing_history.rend(); ++it) {
+            // INCREASED LIMIT: Search deeper into history (was 4)
+            if (hist_links_count > 50) break; 
             
-            if(!already_added) {
-                combined.push_back(it->url);
-                hist_links_count++;
+            std::string u_lower = it->url;
+            std::transform(u_lower.begin(), u_lower.end(), u_lower.begin(), ::tolower);
+            
+            if (u_lower.find(q_lower) != std::string::npos) {
+                bool already_added = false;
+                for(const auto& s : combined) if(s == it->url) already_added = true;
+                
+                if(!already_added) {
+                    combined.push_back(it->url);
+                    hist_links_count++;
+                }
             }
         }
     }
 
-    // 3. Parse and Append Remote
     if (!remote_json.empty()) {
         std::vector<std::string> remote = parse_remote_suggestions(remote_json);
         for (const auto& r : remote) {
@@ -135,7 +134,7 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
         body = msg->response_body->data;
     }
     
-    std::vector<std::string> final_list = get_combined_suggestions(req->query, body);
+    std::vector<std::string> final_list = get_combined_suggestions(req->query, body, req->is_gtk);
 
     if (req->is_gtk) {
         GtkEntryCompletion* completion = GTK_ENTRY_COMPLETION(req->target);
@@ -144,18 +143,27 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
         gtk_list_store_clear(store);
         GtkTreeIter iter;
         
-        // Limit GTK suggestions to avoid huge dropdowns
-        int limit = 10;
+        // INCREASED LIMIT: Show more candidates in dropdown (was 10)
+        int limit = 20;
         for (const auto& s : final_list) {
             if(limit-- <= 0) break;
             std::string text = s;
-            // Strip [H] so the URL bar gets the clean URL, not the tagged one
+            
+            // Strip [H] tag
             if(text.find("[H] ") == 0) text = text.substr(4);
+            
+            // --- NEW: Strip Protocol/WWW for clean autocomplete ---
+            // This allows "y" to match "youtube.com" instead of failing against "https://..."
+            if (text.find("https://") == 0) text = text.substr(8);
+            else if (text.find("http://") == 0) text = text.substr(7);
+            
+            if (text.find("www.") == 0) text = text.substr(4);
+            // ------------------------------------------------------
             
             gtk_list_store_append(store, &iter);
             gtk_list_store_set(store, &iter, 0, text.c_str(), -1);
         }
-        // Force the popup to show if we have results and the entry has focus
+        
         if(final_list.size() > 0) {
             gtk_entry_completion_complete(completion);
         }
@@ -915,8 +923,10 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
     gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(store));
     gtk_entry_completion_set_text_column(completion, 0);
+    gtk_entry_completion_set_inline_completion(completion, TRUE);
+    gtk_entry_completion_set_popup_completion(completion, TRUE);
+    gtk_entry_completion_set_inline_selection(completion, TRUE);
     gtk_entry_set_completion(GTK_ENTRY(url_entry), completion);
-    // Force minimum key length to trigger suggestions
     gtk_entry_completion_set_minimum_key_length(completion, 1);
 
     gtk_box_pack_start(GTK_BOX(toolbar), b_back, FALSE, FALSE, 0);
