@@ -324,11 +324,23 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         ss << "[";
         for(size_t i=0; i<browsing_history.size(); ++i) {
             const auto& h = browsing_history[i];
-            ss << "{ \"title\": \"" << h.title << "\", \"url\": \"" << h.url << "\", \"time\": \"" << h.time_str << "\" }";
+            ss << "{ \"title\": \"" << json_escape(h.title) << "\", "
+            << "\"url\": \"" << json_escape(h.url) << "\", "
+            << "\"time\": \"" << h.time_str << "\" }";
             if(i < browsing_history.size()-1) ss << ",";
         }
         ss << "]";
-        std::string script = "renderHistory('" + ss.str() + "');";
+        
+        // We treat the JSON object as a variable in JS to avoid quote hell
+        std::string json_data = ss.str();
+        // Escape single quotes just for the JS function call wrapper
+        std::string safe_json; 
+        for(char c : json_data) {
+            if(c == '\'') safe_json += "\\'";
+            else safe_json += c;
+        }
+
+        std::string script = "renderHistory('" + safe_json + "');";
         run_js(view, script);
     }
     else if (type == "clear_history") {

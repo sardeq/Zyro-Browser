@@ -53,6 +53,11 @@ int main(int argc, char** argv) {
         NULL
     );
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
+    //temp
+    webkit_web_context_set_cache_model(
+        global_context, 
+        WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER 
+    );
     webkit_cookie_manager_set_persistent_storage(
         webkit_web_context_get_cookie_manager(global_context), 
         (data+"/cookies.sqlite").c_str(), 
