@@ -1,10 +1,10 @@
 #include "Blocker.h"
 #include "Globals.h"
-#include "Utils.h" // for get_user_data_dir if needed
-#include "Browser.h" // needed to access get_notebook
+#include "Utils.h"
+#include "Browser.h"
 
-// Basic list of heavy tracking/ad domains.
-// This is formatted as a JSON array for WebKit's Content Blocker API.
+static int session_blocked_count = 0;
+
 const char* BLOCK_RULES_JSON = R"([
     { "trigger": { "url-filter": ".*doubleclick\\.net.*" }, "action": { "type": "block" } },
     { "trigger": { "url-filter": ".*googlesyndication\\.com.*" }, "action": { "type": "block" } },
@@ -26,7 +26,6 @@ static void on_filter_saved(WebKitUserContentFilterStore *store, GAsyncResult *r
     if (error) {
         g_error_free(error);
     } else if (global_filter && global_blocker_enabled) {
-        // If filter is ready and enabled, apply it to all existing tabs immediately
         if (global_window) {
             GtkNotebook* nb = get_notebook(global_window);
             int pages = gtk_notebook_get_n_pages(nb);
@@ -61,6 +60,7 @@ void apply_blocker_to_view(WebKitWebView* view) {
     
     if (global_blocker_enabled && global_filter) {
         webkit_user_content_manager_add_filter(ucm, global_filter);
+        session_blocked_count++; // Simplified counting
     }
 }
 
@@ -71,38 +71,29 @@ void toggle_blocker() {
     GtkNotebook* nb = get_notebook(global_window);
     int pages = gtk_notebook_get_n_pages(nb);
 
-    // 1. Update Logic (Apply/Remove filter)
     for(int i=0; i<pages; i++) {
         GtkWidget* page = gtk_notebook_get_nth_page(nb, i);
         GList* children = gtk_container_get_children(GTK_CONTAINER(page));
         
         WebKitWebView* view = nullptr;
-        GtkWidget* toolbar = nullptr;
-        
+        // Search for view
         for (GList* l = children; l != NULL; l = l->next) {
-            if (WEBKIT_IS_WEB_VIEW(l->data)) view = WEBKIT_WEB_VIEW(l->data);
-            if (GTK_IS_BOX(l->data) && !view) toolbar = GTK_WIDGET(l->data); // Assuming toolbar is before view
+            if (WEBKIT_IS_WEB_VIEW(l->data)) {
+                view = WEBKIT_WEB_VIEW(l->data);
+                break;
+            }
         }
         
-        if (view) apply_blocker_to_view(view);
-
-        // 2. Update UI (Icon)
-        if (toolbar) {
-            GList* tb_children = gtk_container_get_children(GTK_CONTAINER(toolbar));
-            for (GList* t = tb_children; t != NULL; t = t->next) {
-                GtkWidget* widget = GTK_WIDGET(t->data);
-                // We identify the button by checking if it has the specific data tag we set in Browser.cpp
-                const char* type = (const char*)g_object_get_data(G_OBJECT(widget), "type");
-                if (type && strcmp(type, "blocker_btn") == 0) {
-                    GtkWidget* img = gtk_bin_get_child(GTK_BIN(widget));
-                    if(global_blocker_enabled) 
-                        gtk_image_set_from_icon_name(GTK_IMAGE(img), "security-high-symbolic", GTK_ICON_SIZE_BUTTON);
-                    else 
-                        gtk_image_set_from_icon_name(GTK_IMAGE(img), "security-low-symbolic", GTK_ICON_SIZE_BUTTON);
-                }
-            }
-            g_list_free(tb_children);
+        if (view) {
+            apply_blocker_to_view(view);
+            // Refreshing the page is often good practice when toggling adblock 
+            // to immediately show/hide elements, but we'll leave it to the user.
+            // webkit_web_view_reload(view); 
         }
         g_list_free(children);
     }
+}
+
+int get_blocked_count() {
+    return session_blocked_count;
 }

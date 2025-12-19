@@ -18,6 +18,9 @@ void on_url_activate(GtkEntry* e, gpointer view_ptr);
 static void on_url_changed(GtkEditable* editable, gpointer user_data);
 static GtkWidget* on_web_view_create(WebKitWebView* web_view, WebKitNavigationAction* navigation_action, gpointer user_data);
 
+// Add this to Blocker.h in your mind, or extern it here
+extern int get_blocked_count();
+
 // --- Helpers ---
 void run_js(WebKitWebView* view, const std::string& script) {
     webkit_web_view_evaluate_javascript(view, script.c_str(), -1, NULL, NULL, NULL, NULL, NULL);
@@ -90,7 +93,27 @@ std::vector<std::string> get_combined_suggestions(const std::string& query, cons
         }
     }
 
-    // 2. Parse and Append Remote
+    // 2. Check Browsing History (Past Links)
+    int hist_links_count = 0;
+    for (auto it = browsing_history.rbegin(); it != browsing_history.rend(); ++it) {
+        if (hist_links_count > 4) break; 
+        
+        std::string u_lower = it->url;
+        std::transform(u_lower.begin(), u_lower.end(), u_lower.begin(), ::tolower);
+        
+        // Match if URL contains query
+        if (u_lower.find(q_lower) != std::string::npos) {
+            bool already_added = false;
+            for(const auto& s : combined) if(s == it->url) already_added = true;
+            
+            if(!already_added) {
+                combined.push_back(it->url);
+                hist_links_count++;
+            }
+        }
+    }
+
+    // 3. Parse and Append Remote
     if (!remote_json.empty()) {
         std::vector<std::string> remote = parse_remote_suggestions(remote_json);
         for (const auto& r : remote) {
@@ -120,15 +143,24 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
         
         gtk_list_store_clear(store);
         GtkTreeIter iter;
+        
+        // Limit GTK suggestions to avoid huge dropdowns
+        int limit = 10;
         for (const auto& s : final_list) {
+            if(limit-- <= 0) break;
             std::string text = s;
+            // Strip [H] so the URL bar gets the clean URL, not the tagged one
             if(text.find("[H] ") == 0) text = text.substr(4);
             
             gtk_list_store_append(store, &iter);
             gtk_list_store_set(store, &iter, 0, text.c_str(), -1);
         }
-        gtk_entry_completion_complete(completion);
+        // Force the popup to show if we have results and the entry has focus
+        if(final_list.size() > 0) {
+            gtk_entry_completion_complete(completion);
+        }
     } else {
+        // JS Logic (Home Page)
         std::stringstream js_array;
         js_array << "[";
         for (size_t i = 0; i < final_list.size(); ++i) {
@@ -144,7 +176,7 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
 }
 
 void fetch_suggestions(const std::string& query, bool is_gtk, gpointer target) {
-    if (query.length() < 2) return;
+    if (query.length() < 1) return; // Allow 1 char suggestions for history
     
     SuggestionRequest* req = new SuggestionRequest{ is_gtk, target, query };
     std::string url = settings.suggestion_api + query;
@@ -332,9 +364,7 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         }
         ss << "]";
         
-        // We treat the JSON object as a variable in JS to avoid quote hell
         std::string json_data = ss.str();
-        // Escape single quotes just for the JS function call wrapper
         std::string safe_json; 
         for(char c : json_data) {
             if(c == '\'') safe_json += "\\'";
@@ -350,7 +380,6 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     }
 }
 
-// --- Autofill ---
 void try_autofill(WebKitWebView* view, const char* uri) {
     if (!global_security.ready) return;
     std::string current_url(uri);
@@ -408,14 +437,9 @@ void refresh_bookmarks_bar(GtkWidget* bar) {
                 GtkWidget* rename_item = gtk_menu_item_new_with_label("Rename");
                 GtkWidget* del_item = gtk_menu_item_new_with_label("Delete Bookmark");
                 
-                // RENAME
                 g_signal_connect(rename_item, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer data){
                     int idx = GPOINTER_TO_INT(data);
-                    
-                    GtkWidget* dialog = gtk_dialog_new_with_buttons("Rename Bookmark",
-                        GTK_WINDOW(global_window), GTK_DIALOG_MODAL,
-                        "_Cancel", GTK_RESPONSE_CANCEL, "_Save", GTK_RESPONSE_OK, NULL);
-                    
+                    GtkWidget* dialog = gtk_dialog_new_with_buttons("Rename Bookmark", GTK_WINDOW(global_window), GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL, "_Save", GTK_RESPONSE_OK, NULL);
                     GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
                     GtkWidget* entry = gtk_entry_new();
                     gtk_entry_set_text(GTK_ENTRY(entry), bookmarks_list[idx].title.c_str());
@@ -427,7 +451,6 @@ void refresh_bookmarks_bar(GtkWidget* bar) {
                         if (text && strlen(text) > 0) {
                             bookmarks_list[idx].title = text;
                             save_bookmarks_to_disk();
-                            
                             GtkNotebook* nb = get_notebook(global_window);
                             for(int i=0; i<gtk_notebook_get_n_pages(nb); i++){
                                 GtkWidget* pb = gtk_notebook_get_nth_page(nb, i);
@@ -439,12 +462,10 @@ void refresh_bookmarks_bar(GtkWidget* bar) {
                     gtk_widget_destroy(dialog);
                 }), GINT_TO_POINTER(index));
 
-                // DELETE
                 g_signal_connect(del_item, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer data){
                     int idx = GPOINTER_TO_INT(data);
                     bookmarks_list.erase(bookmarks_list.begin() + idx);
                     save_bookmarks_to_disk();
-                    
                     GtkNotebook* nb = get_notebook(global_window);
                     for(int i=0; i<gtk_notebook_get_n_pages(nb); i++){
                         GtkWidget* pb = gtk_notebook_get_nth_page(nb, i);
@@ -471,10 +492,28 @@ void refresh_bookmarks_bar(GtkWidget* bar) {
 
 static void on_url_changed(GtkEditable* editable, gpointer user_data) {
     std::string text = gtk_entry_get_text(GTK_ENTRY(editable));
-    if (text.find("://") != std::string::npos || text.find(".") != std::string::npos) return;
+    // Skip if it looks like a full URL to prevent annoying popups while typing protocol
+    if (text.find("://") != std::string::npos) return;
     
     GtkEntryCompletion* completion = gtk_entry_get_completion(GTK_ENTRY(editable));
+    // Fetch suggestions (History + API)
     fetch_suggestions(text, true, completion);
+}
+
+// Handle clicking a suggestion from the dropdown
+static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* model, GtkTreeIter* iter, gpointer entry_ptr) {
+    gchar* value;
+    gtk_tree_model_get(model, iter, 0, &value, -1);
+    
+    std::string url(value);
+    g_free(value);
+
+    GtkEntry* entry = GTK_ENTRY(entry_ptr);
+    gtk_entry_set_text(entry, url.c_str());
+    
+    // Explicitly emit Activate so on_url_activate handles it
+    g_signal_emit_by_name(entry, "activate");
+    return TRUE;
 }
 
 void on_url_activate(GtkEntry* e, gpointer view_ptr) {
@@ -482,24 +521,26 @@ void on_url_activate(GtkEntry* e, gpointer view_ptr) {
     if (!v) return;
     std::string t = gtk_entry_get_text(e);
     
-    if(t.find("://") == std::string::npos && t.find(".") == std::string::npos) {
+    // Check if it is a URL or a search query
+    bool is_url = false;
+    
+    // 1. Check for Protocol
+    if (t.find("://") != std::string::npos) is_url = true;
+    // 2. Check for Domain-like structure (e.g., google.com, localhost)
+    else if (t.find(".") != std::string::npos && t.find(" ") == std::string::npos) is_url = true;
+    else if (t.find("localhost") != std::string::npos) is_url = true;
+
+    if (is_url) {
+        if (t.find("://") == std::string::npos) {
+            t = "https://" + t;
+        }
+        webkit_web_view_load_uri(v, t.c_str());
+    } else {
         add_search_query(t);
         t = settings.search_engine + t;
-    } 
-    else if(t.find("://") == std::string::npos) {
-        t = "https://" + t;
+        webkit_web_view_load_uri(v, t.c_str());
     }
-    webkit_web_view_load_uri(v, t.c_str());
     gtk_widget_grab_focus(GTK_WIDGET(v));
-}
-
-static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* model, GtkTreeIter* iter, gpointer entry) {
-    gchar* value;
-    gtk_tree_model_get(model, iter, 0, &value, -1);
-    gtk_entry_set_text(GTK_ENTRY(entry), value);
-    g_signal_emit_by_name(entry, "activate"); 
-    g_free(value);
-    return TRUE;
 }
 
 void update_url_bar(WebKitWebView* web_view, GtkEntry* entry) {
@@ -591,14 +632,11 @@ static gboolean on_decide_policy(WebKitWebView* v, WebKitPolicyDecision* decisio
     return FALSE;
 }
 
-// --- Handler for create signal (target="_blank") ---
 static GtkWidget* on_web_view_create(WebKitWebView* web_view, WebKitNavigationAction* navigation_action, gpointer user_data) {
     GtkWidget* win = GTK_WIDGET(user_data);
-    // FIX: Pass 'web_view' as the related view to avoid assertion failure
     return create_new_tab(win, "", global_context, web_view);
 }
 
-// --- Site Info Popover ---
 void show_site_info_popover(GtkEntry* entry, WebKitWebView* view) {
     const char* uri = webkit_web_view_get_uri(view);
     bool is_secure = (uri && strncmp(uri, "https://", 8) == 0);
@@ -638,7 +676,6 @@ void on_icon_press(GtkEntry *entry, GtkEntryIconPosition icon_pos, GdkEvent *eve
     }
 }
 
-// --- Menu Helper ---
 void show_menu(GtkButton* btn, gpointer win) {
     GtkWidget* popover = gtk_popover_new(GTK_WIDGET(btn));
     gtk_style_context_add_class(gtk_widget_get_style_context(popover), "menu-popover");
@@ -688,6 +725,89 @@ void show_menu(GtkButton* btn, gpointer win) {
     gtk_popover_popup(GTK_POPOVER(popover));
 }
 
+// --- Block Popover Logic ---
+void create_blocker_popover(GtkWidget* toggle_btn) {
+    GtkWidget* popover = gtk_popover_new(toggle_btn);
+    gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_BOTTOM);
+    
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    g_object_set(box, "margin", 15, "width-request", 220, NULL);
+    
+    GtkWidget* title = gtk_label_new("<b>AdShield</b>");
+    gtk_label_set_use_markup(GTK_LABEL(title), TRUE);
+    
+    GtkWidget* switch_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget* sw_label = gtk_label_new("Enable Protection");
+    GtkWidget* sw = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(sw), global_blocker_enabled);
+    
+    g_signal_connect(sw, "state-set", G_CALLBACK(+[](GtkSwitch* s, gboolean state, gpointer data){
+        toggle_blocker(); // This toggles the global boolean
+        // Update the button icon in the main window
+        GtkWidget* btn = (GtkWidget*)data;
+        GtkWidget* img = gtk_bin_get_child(GTK_BIN(btn));
+        if (state) {
+            gtk_image_set_from_icon_name(GTK_IMAGE(img), "security-high-symbolic", GTK_ICON_SIZE_BUTTON);
+            gtk_widget_set_tooltip_text(btn, "AdShield: ON");
+        } else {
+            gtk_image_set_from_icon_name(GTK_IMAGE(img), "security-low-symbolic", GTK_ICON_SIZE_BUTTON);
+            gtk_widget_set_tooltip_text(btn, "AdShield: OFF");
+        }
+        return FALSE; // Allow default handling
+    }), toggle_btn);
+
+    gtk_box_pack_start(GTK_BOX(switch_box), sw_label, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(switch_box), sw, FALSE, FALSE, 0);
+    
+    GtkWidget* stats_sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    
+    // Stats / Info
+    GtkWidget* stats_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(stats_grid), 10);
+    gtk_grid_set_row_spacing(GTK_GRID(stats_grid), 5);
+    
+    GtkWidget* l_count = gtk_label_new("Rules Active:");
+    GtkWidget* v_count = gtk_label_new("12"); // Hardcoded rule count from JSON size
+    gtk_label_set_xalign(GTK_LABEL(l_count), 0);
+    gtk_label_set_xalign(GTK_LABEL(v_count), 1);
+    
+    GtkWidget* l_blocked = gtk_label_new("Blocked:");
+    // Get live count from Blocker.cpp
+    std::string count_str = std::to_string(get_blocked_count());
+    GtkWidget* v_blocked = gtk_label_new(count_str.c_str());
+    gtk_label_set_xalign(GTK_LABEL(l_blocked), 0);
+    gtk_label_set_xalign(GTK_LABEL(v_blocked), 1);
+
+    gtk_grid_attach(GTK_GRID(stats_grid), l_count, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(stats_grid), v_count, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(stats_grid), l_blocked, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(stats_grid), v_blocked, 1, 1, 1, 1);
+    
+    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), switch_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), stats_sep, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), stats_grid, FALSE, FALSE, 0);
+
+    gtk_container_add(GTK_CONTAINER(popover), box);
+    gtk_widget_show_all(box);
+    
+    g_object_set_data(G_OBJECT(toggle_btn), "popover", popover);
+    
+    // Refresh stats when opened
+    g_signal_connect(toggle_btn, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer data){
+        GtkWidget* pop = (GtkWidget*)data;
+        if(gtk_toggle_button_get_active(b)) {
+             gtk_popover_popup(GTK_POPOVER(pop));
+        } else {
+             gtk_popover_popdown(GTK_POPOVER(pop));
+        }
+    }), popover);
+    
+    g_signal_connect(popover, "closed", G_CALLBACK(+[](GtkPopover*, gpointer b){
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), FALSE);
+    }), toggle_btn);
+}
+
 // --- CREATE NEW TAB (Main UI Builder) ---
 GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context, WebKitWebView* related_view) {
     GtkNotebook* notebook = get_notebook(win);
@@ -695,18 +815,11 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     WebKitUserContentManager* ucm = webkit_user_content_manager_new();
     webkit_user_content_manager_register_script_message_handler(ucm, "zyro");
     
-    // FIX: Remove "web-context" when "related-view" is present
     GtkWidget* view;
     if (related_view) {
-        view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, 
-            "user-content-manager", ucm, 
-            "related-view", related_view,
-            NULL));
+        view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "user-content-manager", ucm, "related-view", related_view, NULL));
     } else {
-        view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, 
-            "web-context", context, 
-            "user-content-manager", ucm, 
-            NULL));
+        view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
     }
 
     g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
@@ -751,15 +864,16 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
         }
     }), NULL);
 
-    GtkWidget* b_blocker = gtk_button_new_from_icon_name(
+    // Blocker Toggle Button with Popup
+    GtkWidget* b_blocker = gtk_toggle_button_new();
+    GtkWidget* bl_icon = gtk_image_new_from_icon_name(
         global_blocker_enabled ? "security-high-symbolic" : "security-low-symbolic", 
         GTK_ICON_SIZE_BUTTON
     );
-    gtk_widget_set_tooltip_text(b_blocker, "Toggle Ad/Tracker Blocker");
-    g_object_set_data(G_OBJECT(b_blocker), "type", (gpointer)"blocker_btn");
-    g_signal_connect(b_blocker, "clicked", G_CALLBACK(+[](GtkButton*, gpointer){
-        toggle_blocker();
-    }), NULL);
+    gtk_container_add(GTK_CONTAINER(b_blocker), bl_icon);
+    gtk_widget_set_tooltip_text(b_blocker, global_blocker_enabled ? "AdShield: ON" : "AdShield: OFF");
+    g_object_set_data(G_OBJECT(b_blocker), "type", (gpointer)"blocker_btn"); // For updates
+    create_blocker_popover(b_blocker);
 
     gtk_box_pack_start(GTK_BOX(pop_box), pop_header, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(pop_box), list_box, FALSE, FALSE, 0);
@@ -802,6 +916,8 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(store));
     gtk_entry_completion_set_text_column(completion, 0);
     gtk_entry_set_completion(GTK_ENTRY(url_entry), completion);
+    // Force minimum key length to trigger suggestions
+    gtk_entry_completion_set_minimum_key_length(completion, 1);
 
     gtk_box_pack_start(GTK_BOX(toolbar), b_back, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);
@@ -884,7 +1000,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     }), NULL);
 
     g_signal_connect(view, "decide-policy", G_CALLBACK(on_decide_policy), win);
-    // Connect to the create signal to handle new windows/tabs (e.g. target="_blank")
     g_signal_connect(view, "create", G_CALLBACK(on_web_view_create), win);
     
     g_signal_connect(view, "notify::title", G_CALLBACK(+[](WebKitWebView* v, GParamSpec*, GtkLabel* l){ 
@@ -899,7 +1014,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_widget_show_all(page_box);
     gtk_notebook_set_current_page(notebook, page);
     
-    // Only load if a URL is provided. WebKit handles loading for "create" signals automatically.
     if (!url.empty()) {
         webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
     }
