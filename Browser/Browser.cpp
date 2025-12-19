@@ -18,10 +18,8 @@ void on_url_activate(GtkEntry* e, gpointer view_ptr);
 static void on_url_changed(GtkEditable* editable, gpointer user_data);
 static GtkWidget* on_web_view_create(WebKitWebView* web_view, WebKitNavigationAction* navigation_action, gpointer user_data);
 
-// Add this to Blocker.h in your mind, or extern it here
 extern int get_blocked_count();
 
-// --- Helpers ---
 void run_js(WebKitWebView* view, const std::string& script) {
     webkit_web_view_evaluate_javascript(view, script.c_str(), -1, NULL, NULL, NULL, NULL, NULL);
 }
@@ -49,7 +47,6 @@ WebKitWebView* get_active_webview(GtkWidget* win) {
     return view;
 }
 
-// --- Suggestion Logic ---
 struct SuggestionRequest {
     bool is_gtk;
     gpointer target;
@@ -95,7 +92,6 @@ std::vector<std::string> get_combined_suggestions(const std::string& query, cons
     if (include_urls) {
         int hist_links_count = 0;
         for (auto it = browsing_history.rbegin(); it != browsing_history.rend(); ++it) {
-            // INCREASED LIMIT: Search deeper into history (was 4)
             if (hist_links_count > 50) break; 
             
             std::string u_lower = it->url;
@@ -143,17 +139,13 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
         gtk_list_store_clear(store);
         GtkTreeIter iter;
         
-        // INCREASED LIMIT: Show more candidates in dropdown (was 10)
         int limit = 20;
         for (const auto& s : final_list) {
             if(limit-- <= 0) break;
             std::string text = s;
             
-            // Strip [H] tag
             if(text.find("[H] ") == 0) text = text.substr(4);
-            
-            // --- NEW: Strip Protocol/WWW for clean autocomplete ---
-            // This allows "y" to match "youtube.com" instead of failing against "https://..."
+
             if (text.find("https://") == 0) text = text.substr(8);
             else if (text.find("http://") == 0) text = text.substr(7);
             
@@ -168,7 +160,6 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
             gtk_entry_completion_complete(completion);
         }
     } else {
-        // JS Logic (Home Page)
         std::stringstream js_array;
         js_array << "[";
         for (size_t i = 0; i < final_list.size(); ++i) {
@@ -184,7 +175,7 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
 }
 
 void fetch_suggestions(const std::string& query, bool is_gtk, gpointer target) {
-    if (query.length() < 1) return; // Allow 1 char suggestions for history
+    if (query.length() < 1) return; 
     
     SuggestionRequest* req = new SuggestionRequest{ is_gtk, target, query };
     std::string url = settings.suggestion_api + query;
@@ -192,7 +183,6 @@ void fetch_suggestions(const std::string& query, bool is_gtk, gpointer target) {
     soup_session_queue_message(soup_session, msg, on_suggestion_ready, req);
 }
 
-// --- IPC: C++ <-> JS Communication ---
 static void on_script_message(WebKitUserContentManager* manager, WebKitJavascriptResult* res, gpointer user_data) {
     JSCValue* value = webkit_javascript_result_get_js_value(res);
     char* json_str = jsc_value_to_string(value);
@@ -419,7 +409,6 @@ void try_autofill(WebKitWebView* view, const char* uri) {
     }
 }
 
-// --- Bookmarks Bar ---
 void refresh_bookmarks_bar(GtkWidget* bar) {
     GList *children = gtk_container_get_children(GTK_CONTAINER(bar));
     for(GList* iter = children; iter != NULL; iter = g_list_next(iter))
@@ -496,19 +485,15 @@ void refresh_bookmarks_bar(GtkWidget* bar) {
     gtk_widget_show_all(bar);
 }
 
-// --- URL & Tab Handlers ---
 
 static void on_url_changed(GtkEditable* editable, gpointer user_data) {
     std::string text = gtk_entry_get_text(GTK_ENTRY(editable));
-    // Skip if it looks like a full URL to prevent annoying popups while typing protocol
     if (text.find("://") != std::string::npos) return;
     
     GtkEntryCompletion* completion = gtk_entry_get_completion(GTK_ENTRY(editable));
-    // Fetch suggestions (History + API)
     fetch_suggestions(text, true, completion);
 }
 
-// Handle clicking a suggestion from the dropdown
 static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* model, GtkTreeIter* iter, gpointer entry_ptr) {
     gchar* value;
     gtk_tree_model_get(model, iter, 0, &value, -1);
@@ -519,7 +504,6 @@ static gboolean on_match_selected(GtkEntryCompletion* widget, GtkTreeModel* mode
     GtkEntry* entry = GTK_ENTRY(entry_ptr);
     gtk_entry_set_text(entry, url.c_str());
     
-    // Explicitly emit Activate so on_url_activate handles it
     g_signal_emit_by_name(entry, "activate");
     return TRUE;
 }
@@ -529,12 +513,9 @@ void on_url_activate(GtkEntry* e, gpointer view_ptr) {
     if (!v) return;
     std::string t = gtk_entry_get_text(e);
     
-    // Check if it is a URL or a search query
     bool is_url = false;
     
-    // 1. Check for Protocol
     if (t.find("://") != std::string::npos) is_url = true;
-    // 2. Check for Domain-like structure (e.g., google.com, localhost)
     else if (t.find(".") != std::string::npos && t.find(" ") == std::string::npos) is_url = true;
     else if (t.find("localhost") != std::string::npos) is_url = true;
 
@@ -621,7 +602,7 @@ static gboolean on_decide_policy(WebKitWebView* v, WebKitPolicyDecision* decisio
             WebKitNavigationAction* action = webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(decision));
             if (webkit_navigation_action_get_mouse_button(action) == 2) {
                 WebKitURIRequest* req = webkit_navigation_action_get_request(action);
-                create_new_tab(GTK_WIDGET(win), webkit_uri_request_get_uri(req), global_context);
+                create_new_tab(GTK_WIDGET(win), webkit_uri_request_get_uri(req), global_context, nullptr, false);
                 webkit_policy_decision_ignore(decision);
                 return TRUE;
             }
@@ -733,7 +714,6 @@ void show_menu(GtkButton* btn, gpointer win) {
     gtk_popover_popup(GTK_POPOVER(popover));
 }
 
-// --- Block Popover Logic ---
 void create_blocker_popover(GtkWidget* toggle_btn) {
     GtkWidget* popover = gtk_popover_new(toggle_btn);
     gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_BOTTOM);
@@ -750,8 +730,7 @@ void create_blocker_popover(GtkWidget* toggle_btn) {
     gtk_switch_set_active(GTK_SWITCH(sw), global_blocker_enabled);
     
     g_signal_connect(sw, "state-set", G_CALLBACK(+[](GtkSwitch* s, gboolean state, gpointer data){
-        toggle_blocker(); // This toggles the global boolean
-        // Update the button icon in the main window
+        toggle_blocker();
         GtkWidget* btn = (GtkWidget*)data;
         GtkWidget* img = gtk_bin_get_child(GTK_BIN(btn));
         if (state) {
@@ -761,7 +740,7 @@ void create_blocker_popover(GtkWidget* toggle_btn) {
             gtk_image_set_from_icon_name(GTK_IMAGE(img), "security-low-symbolic", GTK_ICON_SIZE_BUTTON);
             gtk_widget_set_tooltip_text(btn, "AdShield: OFF");
         }
-        return FALSE; // Allow default handling
+        return FALSE; 
     }), toggle_btn);
 
     gtk_box_pack_start(GTK_BOX(switch_box), sw_label, TRUE, TRUE, 0);
@@ -769,18 +748,16 @@ void create_blocker_popover(GtkWidget* toggle_btn) {
     
     GtkWidget* stats_sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     
-    // Stats / Info
     GtkWidget* stats_grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(stats_grid), 10);
     gtk_grid_set_row_spacing(GTK_GRID(stats_grid), 5);
     
     GtkWidget* l_count = gtk_label_new("Rules Active:");
-    GtkWidget* v_count = gtk_label_new("12"); // Hardcoded rule count from JSON size
+    GtkWidget* v_count = gtk_label_new("12"); 
     gtk_label_set_xalign(GTK_LABEL(l_count), 0);
     gtk_label_set_xalign(GTK_LABEL(v_count), 1);
     
     GtkWidget* l_blocked = gtk_label_new("Blocked:");
-    // Get live count from Blocker.cpp
     std::string count_str = std::to_string(get_blocked_count());
     GtkWidget* v_blocked = gtk_label_new(count_str.c_str());
     gtk_label_set_xalign(GTK_LABEL(l_blocked), 0);
@@ -801,7 +778,6 @@ void create_blocker_popover(GtkWidget* toggle_btn) {
     
     g_object_set_data(G_OBJECT(toggle_btn), "popover", popover);
     
-    // Refresh stats when opened
     g_signal_connect(toggle_btn, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer data){
         GtkWidget* pop = (GtkWidget*)data;
         if(gtk_toggle_button_get_active(b)) {
@@ -816,8 +792,7 @@ void create_blocker_popover(GtkWidget* toggle_btn) {
     }), toggle_btn);
 }
 
-// --- CREATE NEW TAB (Main UI Builder) ---
-GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context, WebKitWebView* related_view) {
+GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebContext* context, WebKitWebView* related_view, bool switch_to) {   
     GtkNotebook* notebook = get_notebook(win);
     
     WebKitUserContentManager* ucm = webkit_user_content_manager_new();
@@ -846,7 +821,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
     GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu"); 
 
-    // Downloads Button & Popover
     GtkWidget* b_downloads = gtk_toggle_button_new(); 
     GtkWidget* dl_icon = gtk_image_new_from_icon_name("folder-download-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_container_add(GTK_CONTAINER(b_downloads), dl_icon);
@@ -872,7 +846,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
         }
     }), NULL);
 
-    // Blocker Toggle Button with Popup
     GtkWidget* b_blocker = gtk_toggle_button_new();
     GtkWidget* bl_icon = gtk_image_new_from_icon_name(
         global_blocker_enabled ? "security-high-symbolic" : "security-low-symbolic", 
@@ -904,7 +877,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), FALSE);
     }), b_downloads);
 
-    // Set Global Pointers
     global_downloads_btn = b_downloads;
     global_downloads_popover = dl_popover;
     global_downloads_list_box = list_box;
@@ -917,7 +889,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
         }
     }), NULL);
 
-    // URL Bar
     GtkWidget* url_entry = gtk_entry_new();
     GtkEntryCompletion* completion = gtk_entry_completion_new();
     GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
@@ -939,12 +910,10 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(toolbar), b_blocker, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0);
 
-    // Bookmarks Bar
     GtkWidget* bookmarks_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     gtk_style_context_add_class(gtk_widget_get_style_context(bookmarks_bar), "bookmarks-bar");
     refresh_bookmarks_bar(bookmarks_bar);
 
-    // Main Layout Container
     GtkWidget* page_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     g_object_set_data(G_OBJECT(page_box), "win", win); 
     g_object_set_data(G_OBJECT(page_box), "bookmarks_bar", bookmarks_bar); 
@@ -953,7 +922,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(page_box), bookmarks_bar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page_box), view, TRUE, TRUE, 0);
 
-    // Tab Header
     GtkWidget* tab_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     GtkWidget* label = gtk_label_new("New Tab");
     GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
@@ -962,7 +930,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(tab_header), close, FALSE, FALSE, 0);
     gtk_widget_show_all(tab_header);
 
-    // Signals
     g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_back(WEBKIT_WEB_VIEW(v)); }), view);
     g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_forward(WEBKIT_WEB_VIEW(v)); }), view);
     g_signal_connect(b_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_reload(WEBKIT_WEB_VIEW(v)); }), view);
@@ -977,7 +944,6 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     g_signal_connect(completion, "match-selected", G_CALLBACK(on_match_selected), url_entry);
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), NULL);
 
-    // Star Button Logic 
     gtk_entry_set_icon_from_icon_name(GTK_ENTRY(url_entry), GTK_ENTRY_ICON_SECONDARY, "non-starred-symbolic");
     g_signal_connect(url_entry, "icon-press", G_CALLBACK(+[](GtkEntry* entry, GtkEntryIconPosition pos, GdkEvent* ev, gpointer v_ptr){
         if (pos == GTK_ENTRY_ICON_SECONDARY) {
@@ -1022,7 +988,10 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     int page = gtk_notebook_append_page(notebook, page_box, tab_header);
     gtk_notebook_set_tab_reorderable(notebook, page_box, TRUE);
     gtk_widget_show_all(page_box);
-    gtk_notebook_set_current_page(notebook, page);
+    
+    if (switch_to) {
+        gtk_notebook_set_current_page(notebook, page);
+    }
     
     if (!url.empty()) {
         webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), url.c_str());
@@ -1031,14 +1000,100 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     return view;
 }
 
-// --- Key Press Handler ---
+void show_search_overlay(GtkWidget* parent_win) {
+    GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_transient_for(GTK_WINDOW(win), GTK_WINDOW(parent_win));
+    gtk_window_set_modal(GTK_WINDOW(win), TRUE);
+    gtk_window_set_decorated(GTK_WINDOW(win), FALSE);
+    gtk_window_set_position(GTK_WINDOW(win), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_window_set_default_size(GTK_WINDOW(win), 600, 60);
+    
+    gtk_widget_set_name(win, "search-overlay-window");
+
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    gtk_container_add(GTK_CONTAINER(win), box);
+
+    GtkWidget* entry = gtk_entry_new();
+    gtk_widget_set_name(entry, "search-overlay-entry");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Search or enter URL...");
+    gtk_entry_set_icon_from_icon_name(GTK_ENTRY(entry), GTK_ENTRY_ICON_PRIMARY, "system-search-symbolic");
+    
+    PangoAttrList* attr_list = pango_attr_list_new();
+    pango_attr_list_insert(attr_list, pango_attr_size_new(16 * PANGO_SCALE));
+    gtk_entry_set_attributes(GTK_ENTRY(entry), attr_list);
+    pango_attr_list_unref(attr_list);
+
+    gtk_box_pack_start(GTK_BOX(box), entry, TRUE, TRUE, 0);
+
+    g_signal_connect(entry, "activate", G_CALLBACK(+[](GtkEntry* e, gpointer win_ptr){
+        GtkWidget* overlay = GTK_WIDGET(win_ptr);
+        const char* text = gtk_entry_get_text(e);
+        
+        if (text && strlen(text) > 0) {
+            std::string t(text);
+            bool is_url = false;
+            if (t.find("://") != std::string::npos) is_url = true;
+            else if (t.find(".") != std::string::npos && t.find(" ") == std::string::npos) is_url = true;
+            else if (t.find("localhost") != std::string::npos) is_url = true;
+
+            std::string final_url = t;
+            if (!is_url) {
+                final_url = settings.search_engine + t;
+                add_search_query(t);
+            } else if (t.find("://") == std::string::npos) {
+                final_url = "https://" + t;
+            }
+
+            WebKitWebView* v = get_active_webview(global_window);
+            if (v) {
+                webkit_web_view_load_uri(v, final_url.c_str());
+                gtk_widget_grab_focus(GTK_WIDGET(v));
+            }
+        }
+        gtk_widget_destroy(overlay);
+    }), win);
+
+    g_signal_connect(win, "key-press-event", G_CALLBACK(+[](GtkWidget* w, GdkEventKey* event, gpointer) -> gboolean {
+        if (event->keyval == GDK_KEY_Escape) {
+            gtk_widget_destroy(w);
+            return TRUE;
+        }
+        return FALSE;
+    }), NULL);
+
+    g_signal_connect(win, "focus-out-event", G_CALLBACK(+[](GtkWidget* w, GdkEventFocus*, gpointer) -> gboolean {
+        gtk_widget_destroy(w);
+        return FALSE;
+    }), NULL);
+
+    gtk_widget_show_all(win);
+}
+
 gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
     WebKitWebView* view = get_active_webview(widget);
     GtkNotebook* nb = get_notebook(widget);
     GtkEntry* url_entry = nullptr;
     if (view) url_entry = GTK_ENTRY(g_object_get_data(G_OBJECT(view), "entry"));
 
-    // CTRL Shortcuts
+
+    if ((event->state & GDK_CONTROL_MASK) && (event->state & GDK_MOD1_MASK)) {
+        if (event->keyval == GDK_KEY_l || event->keyval == GDK_KEY_L) {
+            if (view) {
+                const char* uri = webkit_web_view_get_uri(view);
+                if (uri && std::string(uri).find("home.html") != std::string::npos) {
+                    run_js(view, "document.getElementById('search').focus(); document.getElementById('search').select();");
+                } 
+                else {
+                    show_search_overlay(widget);
+                }
+            } else {
+                show_search_overlay(widget);
+            }
+            return TRUE;
+        }
+    }
+
     if (event->state & GDK_CONTROL_MASK) {
         switch (event->keyval) {
             case GDK_KEY_t: 
@@ -1077,7 +1132,6 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
         }
     }
 
-    // ALT Shortcuts
     if (event->state & GDK_MOD1_MASK) {
         switch (event->keyval) {
             case GDK_KEY_Left:
@@ -1096,8 +1150,6 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
 
     return FALSE; 
 }
-
-// --- Create Window ---
 void create_window(WebKitWebContext* ctx) {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 

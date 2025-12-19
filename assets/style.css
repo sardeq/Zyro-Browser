@@ -168,3 +168,34 @@ progressbar.error progress {
     background-color: #e06c75;
     border-color: #e06c75;
 }
+
+#search-overlay-window {
+    background-color: transparent; /* Let the container/entry handle the look */
+}
+
+#search-overlay-window box {
+    background-color: #202124;
+    border: 1px solid #444;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+#search-overlay-entry {
+    background-color: #303134;
+    color: #e8eaed;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    caret-color: #8ab4f8;
+    box-shadow: none;
+}
+
+#search-overlay-entry:focus {
+    background-color: #3c4043;
+    box-shadow: none; /* Flat look */
+}
+
+#search-overlay-entry image {
+    color: #9aa0a6;
+    margin-right: 10px;
+}
