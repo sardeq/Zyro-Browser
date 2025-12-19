@@ -3,6 +3,7 @@
 #include "Utils.h"
 #include "Storage.h"
 #include "Downloads.h"
+#include "Blocker.h"
 
 #include <iostream>
 #include <sstream>
@@ -750,6 +751,16 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
         }
     }), NULL);
 
+    GtkWidget* b_blocker = gtk_button_new_from_icon_name(
+        global_blocker_enabled ? "security-high-symbolic" : "security-low-symbolic", 
+        GTK_ICON_SIZE_BUTTON
+    );
+    gtk_widget_set_tooltip_text(b_blocker, "Toggle Ad/Tracker Blocker");
+    g_object_set_data(G_OBJECT(b_blocker), "type", (gpointer)"blocker_btn");
+    g_signal_connect(b_blocker, "clicked", G_CALLBACK(+[](GtkButton*, gpointer){
+        toggle_blocker();
+    }), NULL);
+
     gtk_box_pack_start(GTK_BOX(pop_box), pop_header, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(pop_box), list_box, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(pop_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
@@ -799,6 +810,7 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     
     gtk_box_pack_start(GTK_BOX(toolbar), url_entry, TRUE, TRUE, 5);
     gtk_box_pack_start(GTK_BOX(toolbar), b_downloads, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_blocker, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0);
 
     // Bookmarks Bar

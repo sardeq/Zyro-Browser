@@ -18,3 +18,6 @@ guint64 global_download_id_counter = 1;
 GtkWidget* global_downloads_popover = nullptr;
 GtkWidget* global_downloads_list_box = nullptr;
 GtkWidget* global_downloads_btn = nullptr;
+
+bool global_blocker_enabled = true; // Default to ON
+WebKitUserContentFilter* global_filter = nullptr;

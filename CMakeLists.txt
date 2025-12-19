@@ -12,7 +12,6 @@ if(UNIX AND NOT APPLE)
     pkg_check_modules(LIBSECRET REQUIRED libsecret-1)
 endif()
 
-
 include_directories(
     ${CMAKE_SOURCE_DIR}/Browser
     ${CMAKE_SOURCE_DIR}/Downloads
@@ -36,7 +35,8 @@ add_executable(ZyroBrowser
     main.cpp 
     Globals/Globals.cpp 
     Utils/Utils.cpp 
-    Security/Security.cpp 
+    Security/Security.cpp
+    Security/Blocker.cpp
     Storage/Storage.cpp 
     Downloads/Downloads.cpp 
     Browser/Browser.cpp

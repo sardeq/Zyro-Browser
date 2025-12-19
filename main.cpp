@@ -5,6 +5,7 @@
 #include "Utils.h"
 #include "Downloads.h"
 #include "Browser.h"
+#include "Blocker.h"
 
 static gboolean refresh_download_popup_timer(gpointer) {
     if (global_downloads_popover && gtk_widget_get_visible(global_downloads_popover)) {
@@ -65,6 +66,7 @@ int main(int argc, char** argv) {
     );
 
     init_security(); 
+    init_blocker();
     load_data();
     create_window(global_context);
 

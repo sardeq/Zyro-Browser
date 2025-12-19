@@ -76,3 +76,7 @@ extern guint64 global_download_id_counter;
 extern GtkWidget* global_downloads_popover;
 extern GtkWidget* global_downloads_list_box;
 extern GtkWidget* global_downloads_btn;
+
+
+extern bool global_blocker_enabled; 
+extern WebKitUserContentFilter* global_filter;
