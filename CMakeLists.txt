@@ -4,7 +4,9 @@ project(ZyroBrowser)
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+
 pkg_check_modules(WEBKIT REQUIRED webkit2gtk-4.0)
+
 pkg_check_modules(SOUP REQUIRED libsoup-2.4)
 pkg_check_modules(OPENSSL REQUIRED openssl)
 

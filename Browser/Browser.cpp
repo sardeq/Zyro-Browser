@@ -10,8 +10,45 @@
 #include <regex>
 #include <algorithm>
 #include <cstring> 
+#include <fstream>
+#include <iomanip>
 
-// --- Forward Declarations ---
+
+
+std::string get_process_memory_str(guint pid) {
+    if (pid == 0) return "Shared / Unknown";
+    double mb = 0;
+
+#ifdef _WIN32
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (hProcess) {
+        PROCESS_MEMORY_COUNTERS pmc;
+        if (GetProcessMemoryInfo(hProcess, &pmc, sizeof(pmc))) {
+            mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
+        }
+        CloseHandle(hProcess);
+    }
+#else
+    std::string path = "/proc/" + std::to_string(pid) + "/status";
+    std::ifstream file(path);
+    std::string line;
+    while(std::getline(file, line)) {
+        if(line.find("VmRSS:") == 0) { 
+            std::stringstream ss(line);
+            std::string label, unit;
+            long kb;
+            ss >> label >> kb >> unit;
+            mb = kb / 1024.0;
+            break;
+        }
+    }
+#endif
+    
+    std::stringstream res;
+    res << std::fixed << std::setprecision(1) << mb << " MB";
+    return res.str();
+}
+
 void show_site_info_popover(GtkEntry* entry, WebKitWebView* view);
 void show_menu(GtkButton* btn, gpointer win);
 void on_url_activate(GtkEntry* e, gpointer view_ptr);
@@ -133,31 +170,38 @@ void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_d
     std::vector<std::string> final_list = get_combined_suggestions(req->query, body, req->is_gtk);
 
     if (req->is_gtk) {
-        GtkEntryCompletion* completion = GTK_ENTRY_COMPLETION(req->target);
-        GtkListStore* store = GTK_LIST_STORE(gtk_entry_completion_get_model(completion));
-        
-        gtk_list_store_clear(store);
-        GtkTreeIter iter;
-        
-        int limit = 20;
-        for (const auto& s : final_list) {
-            if(limit-- <= 0) break;
-            std::string text = s;
-            
-            if(text.find("[H] ") == 0) text = text.substr(4);
+        // DETECT TARGET TYPE: Handle both EntryCompletion (URL Bar) and ListStore (Search Overlay)
+        GtkListStore* store = nullptr;
+        if (GTK_IS_ENTRY_COMPLETION(req->target)) {
+            store = GTK_LIST_STORE(gtk_entry_completion_get_model(GTK_ENTRY_COMPLETION(req->target)));
+        } else if (GTK_IS_LIST_STORE(req->target)) {
+            store = GTK_LIST_STORE(req->target);
+        }
 
-            if (text.find("https://") == 0) text = text.substr(8);
-            else if (text.find("http://") == 0) text = text.substr(7);
+        if (store) {
+            gtk_list_store_clear(store);
+            GtkTreeIter iter;
             
-            if (text.find("www.") == 0) text = text.substr(4);
-            // ------------------------------------------------------
-            
-            gtk_list_store_append(store, &iter);
-            gtk_list_store_set(store, &iter, 0, text.c_str(), -1);
+            int limit = 20;
+            for (const auto& s : final_list) {
+                if(limit-- <= 0) break;
+                std::string text = s;
+                
+                if(text.find("[H] ") == 0) text = text.substr(4);
+
+                if (text.find("https://") == 0) text = text.substr(8);
+                else if (text.find("http://") == 0) text = text.substr(7);
+                
+                if (text.find("www.") == 0) text = text.substr(4);
+                
+                gtk_list_store_append(store, &iter);
+                gtk_list_store_set(store, &iter, 0, text.c_str(), -1);
+            }
         }
         
-        if(final_list.size() > 0) {
-            gtk_entry_completion_complete(completion);
+        // Only trigger the "popup" if it is an actual completion widget
+        if(GTK_IS_ENTRY_COMPLETION(req->target) && final_list.size() > 0) {
+            gtk_entry_completion_complete(GTK_ENTRY_COMPLETION(req->target));
         }
     } else {
         std::stringstream js_array;
@@ -929,6 +973,22 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(tab_header), label, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(tab_header), close, FALSE, FALSE, 0);
     gtk_widget_show_all(tab_header);
+    
+    gtk_widget_set_has_tooltip(tab_header, TRUE);
+    g_signal_connect(tab_header, "query-tooltip", G_CALLBACK(+[](GtkWidget* w, gint x, gint y, gboolean k, GtkTooltip* tooltip, gpointer v_ptr){
+        WebKitWebView* v = WEBKIT_WEB_VIEW(v_ptr);
+        guint pid = 0;
+        
+        //doesnt work due to incompatibility, will be fixed later
+        //#if WEBKIT_CHECK_VERSION(2, 34, 0)
+        //    pid = webkit_web_view_get_web_process_identifier(v);
+        //#endif
+        
+        std::string mem = get_process_memory_str(pid);
+        std::string tip = "Process ID: " + std::to_string(pid) + "\nMemory: " + mem;
+        gtk_tooltip_set_text(tooltip, tip.c_str());
+        return TRUE;
+    }), view);
 
     g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_back(WEBKIT_WEB_VIEW(v)); }), view);
     g_signal_connect(b_fwd, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ webkit_web_view_go_forward(WEBKIT_WEB_VIEW(v)); }), view);
@@ -1006,32 +1066,75 @@ void show_search_overlay(GtkWidget* parent_win) {
     gtk_window_set_modal(GTK_WINDOW(win), TRUE);
     gtk_window_set_decorated(GTK_WINDOW(win), FALSE);
     gtk_window_set_position(GTK_WINDOW(win), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_window_set_default_size(GTK_WINDOW(win), 600, 60);
+    
+    // STRICTLY set the size so it doesn't grow
+    gtk_window_set_default_size(GTK_WINDOW(win), 600, 400);
+    gtk_widget_set_size_request(win, 600, 400);
+    gtk_window_set_resizable(GTK_WINDOW(win), FALSE);
     
     gtk_widget_set_name(win, "search-overlay-window");
 
-    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
-    gtk_container_add(GTK_CONTAINER(win), box);
+    GtkWidget* main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(main_box), 15);
+    gtk_container_add(GTK_CONTAINER(win), main_box);
 
+    // --- Search Entry ---
     GtkWidget* entry = gtk_entry_new();
     gtk_widget_set_name(entry, "search-overlay-entry");
     gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Search or enter URL...");
     gtk_entry_set_icon_from_icon_name(GTK_ENTRY(entry), GTK_ENTRY_ICON_PRIMARY, "system-search-symbolic");
-    
+
     PangoAttrList* attr_list = pango_attr_list_new();
     pango_attr_list_insert(attr_list, pango_attr_size_new(16 * PANGO_SCALE));
     gtk_entry_set_attributes(GTK_ENTRY(entry), attr_list);
     pango_attr_list_unref(attr_list);
 
-    gtk_box_pack_start(GTK_BOX(box), entry, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(main_box), entry, FALSE, FALSE, 0);
+
+    // --- Results List ---
+    GtkWidget* scrolled = gtk_scrolled_window_new(NULL, NULL);
+    // POLICY_NEVER for horizontal ensures it won't scroll sideways, forcing the ellipsize logic to kick in
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    
+    GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
+    GtkWidget* tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(tree_view), FALSE);
+    gtk_tree_view_set_activate_on_single_click(GTK_TREE_VIEW(tree_view), FALSE);
+    
+    // --- Renderer Settings (FIX IS HERE) ---
+    GtkCellRenderer* renderer = gtk_cell_renderer_text_new();
+    g_object_set(renderer, 
+        "height", 30, 
+        "xpad", 10, 
+        "ellipsize", PANGO_ELLIPSIZE_END,  // Cuts off text with "..." at the end
+        NULL
+    );
+
+    GtkTreeViewColumn* col = gtk_tree_view_column_new_with_attributes("Result", renderer, "text", 0, NULL);
+    // Force the column to take available space but NOT request more than the window has
+    gtk_tree_view_column_set_expand(col, TRUE); 
+    gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view), col);
+
+    gtk_container_add(GTK_CONTAINER(scrolled), tree_view);
+    gtk_box_pack_start(GTK_BOX(main_box), scrolled, TRUE, TRUE, 0);
+
+    // --- Logic ---
+    g_signal_connect(entry, "changed", G_CALLBACK(+[](GtkEditable* e, gpointer data){
+        GtkListStore* s = GTK_LIST_STORE(data);
+        std::string text = gtk_entry_get_text(GTK_ENTRY(e));
+        if(text.length() > 0 && text.find("://") == std::string::npos) {
+            fetch_suggestions(text, true, s);
+        } else {
+            gtk_list_store_clear(s);
+        }
+    }), store);
 
     g_signal_connect(entry, "activate", G_CALLBACK(+[](GtkEntry* e, gpointer win_ptr){
-        GtkWidget* overlay = GTK_WIDGET(win_ptr);
-        const char* text = gtk_entry_get_text(e);
+        GtkWidget* win = GTK_WIDGET(win_ptr);
+        std::string text = gtk_entry_get_text(e);
         
-        if (text && strlen(text) > 0) {
-            std::string t(text);
+        if (!text.empty()) {
+            std::string t = text;
             bool is_url = false;
             if (t.find("://") != std::string::npos) is_url = true;
             else if (t.find(".") != std::string::npos && t.find(" ") == std::string::npos) is_url = true;
@@ -1046,13 +1149,47 @@ void show_search_overlay(GtkWidget* parent_win) {
             }
 
             WebKitWebView* v = get_active_webview(global_window);
-            if (v) {
-                webkit_web_view_load_uri(v, final_url.c_str());
-                gtk_widget_grab_focus(GTK_WIDGET(v));
-            }
+            if (v) webkit_web_view_load_uri(v, final_url.c_str());
         }
-        gtk_widget_destroy(overlay);
+        gtk_widget_destroy(win);
     }), win);
+
+    g_signal_connect(tree_view, "row-activated", G_CALLBACK(+[](GtkTreeView* t, GtkTreePath* p, GtkTreeViewColumn*, gpointer win_ptr){
+        GtkTreeModel* model = gtk_tree_view_get_model(t);
+        GtkTreeIter iter;
+        if (gtk_tree_model_get_iter(model, &iter, p)) {
+            gchar* value;
+            gtk_tree_model_get(model, &iter, 0, &value, -1);
+            std::string url(value);
+            g_free(value);
+
+            std::string t_str = url;
+            bool is_url = false;
+            if (t_str.find("://") != std::string::npos) is_url = true;
+            else if (t_str.find(".") != std::string::npos && t_str.find(" ") == std::string::npos) is_url = true;
+
+            std::string final_url = t_str;
+            if (!is_url) {
+                final_url = settings.search_engine + t_str;
+                add_search_query(t_str);
+            } else if (t_str.find("://") == std::string::npos) {
+                final_url = "https://" + t_str;
+            }
+
+            WebKitWebView* v = get_active_webview(global_window);
+            if (v) webkit_web_view_load_uri(v, final_url.c_str());
+            
+            gtk_widget_destroy(GTK_WIDGET(win_ptr));
+        }
+    }), win);
+
+    g_signal_connect(entry, "key-press-event", G_CALLBACK(+[](GtkWidget*, GdkEventKey* ev, gpointer list_ptr) -> gboolean {
+        if (ev->keyval == GDK_KEY_Down) {
+            gtk_widget_grab_focus(GTK_WIDGET(list_ptr));
+            return TRUE;
+        }
+        return FALSE;
+    }), tree_view);
 
     g_signal_connect(win, "key-press-event", G_CALLBACK(+[](GtkWidget* w, GdkEventKey* event, gpointer) -> gboolean {
         if (event->keyval == GDK_KEY_Escape) {

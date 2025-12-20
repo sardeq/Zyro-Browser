@@ -199,3 +199,34 @@ progressbar.error progress {
     color: #9aa0a6;
     margin-right: 10px;
 }
+
+/* --- Added for Search Suggestions Styling --- */
+/* This targets the treeview inside the completion popup */
+treeview {
+    background-color: #202124;
+    color: #e8eaed;
+    border-radius: 0 0 8px 8px;
+}
+
+treeview:hover {
+    background-color: #202124;
+}
+
+treeview:selected {
+    background-color: #3c4043;
+    color: #8ab4f8;
+}
+
+/* Ensure the popup window itself is dark */
+window.popup {
+    background-color: #202124;
+    border: 1px solid #444;
+}
+
+/* Tooltip Styling */
+tooltip {
+    background-color: #292a2d;
+    color: #e8eaed;
+    border: 1px solid #444;
+    border-radius: 4px;
+}
