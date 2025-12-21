@@ -11,6 +11,7 @@
 #else
     #include <unistd.h>
     #include <sys/sysinfo.h>
+    #include <dirent.h>
 #endif
 
 std::string get_self_path() {
@@ -29,6 +30,78 @@ std::string get_self_path() {
     }
     return "";
 #endif
+}
+
+#ifndef _WIN32
+long get_pid_rss_kb(int pid) {
+    std::string path = "/proc/" + std::to_string(pid) + "/statm";
+    std::ifstream f(path);
+    if (!f.is_open()) return 0;
+    long size, rss;
+    f >> size >> rss; 
+    return rss * (sysconf(_SC_PAGESIZE) / 1024); 
+}
+
+std::vector<int> get_child_pids() {
+    std::vector<int> children;
+    int my_pid = getpid();
+    
+    DIR* proc = opendir("/proc");
+    if (!proc) return children;
+
+    struct dirent* entry;
+    while ((entry = readdir(proc)) != NULL) {
+        if (entry->d_type == DT_DIR && isdigit(entry->d_name[0])) {
+            int pid = std::stoi(entry->d_name);
+            if (pid == my_pid) continue; // Skip self
+
+            std::string stat_path = "/proc/" + std::string(entry->d_name) + "/stat";
+            std::ifstream f(stat_path);
+            if (f.is_open()) {
+                std::string dummy;
+                int ppid;
+                std::string line;
+                std::getline(f, line);
+                size_t last_paren = line.find_last_of(')');
+                if (last_paren != std::string::npos && last_paren + 2 < line.length()) {
+                    std::stringstream ss(line.substr(last_paren + 2));
+                    char state;
+                    ss >> state >> ppid;
+                    
+                    if (ppid == my_pid) {
+                        children.push_back(pid);
+                    }
+                }
+            }
+        }
+    }
+    closedir(proc);
+    return children;
+}
+#endif
+
+
+std::string get_total_memory_str() {
+    double total_mb = 0;
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        total_mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
+    }
+#else
+    long total_kb = get_pid_rss_kb(getpid());
+    
+    std::vector<int> children = get_child_pids();
+    for(int pid : children) {
+        total_kb += get_pid_rss_kb(pid);
+    }
+    
+    total_mb = total_kb / 1024.0;
+#endif
+
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(1) << total_mb << " MB";
+    return ss.str();
 }
 
 std::string get_assets_path() {
@@ -85,18 +158,11 @@ std::string json_escape(const std::string& s) {
 }
 
 void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
-#ifdef _WIN32
-    ram_usage = "N/A"; cpu_usage = 0; 
-#else
-    struct sysinfo memInfo;
-    sysinfo(&memInfo);
-    long long physMemUsed = (memInfo.totalram - memInfo.freeram) * memInfo.mem_unit;
-    long long totalPhysMem = memInfo.totalram * memInfo.mem_unit;
-    
-    std::stringstream ss; ss.precision(1);
-    ss << std::fixed << (double)physMemUsed / (1024*1024*1024) << " / " << (double)totalPhysMem / (1024*1024*1024) << " GB";
-    ram_usage = ss.str();
+    ram_usage = get_total_memory_str();
 
+#ifdef _WIN32
+    cpu_usage = 0; 
+#else
     static unsigned long long lastTotalUser, lastTotalUserLow, lastTotalSys, lastTotalIdle;
     unsigned long long totalUser, totalUserLow, totalSys, totalIdle, total;
     std::ifstream file("/proc/stat");

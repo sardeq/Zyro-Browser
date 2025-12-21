@@ -12,72 +12,13 @@
 #include <cstring> 
 #include <fstream>
 #include <iomanip>
-#include <dlfcn.h>
 
 
-guint get_pid_from_webview(WebKitWebView* view) {
-    typedef guint (*WebKitGetPidFunc)(WebKitWebView*);
-    static WebKitGetPidFunc get_pid_func = nullptr;
-    static bool attempted_load = false;
-
-    if (!attempted_load) {
-        attempted_load = true;
-        void* handle = dlopen("libwebkit2gtk-4.1.so", RTLD_LAZY);
-        if (!handle) handle = dlopen("libwebkit2gtk-4.1.so.0", RTLD_LAZY);
-        
-        if (handle) {
-            dlerror();
-            void* sym = dlsym(handle, "webkit_web_view_get_web_process_identifier");
-            if (sym) {
-                get_pid_func = (WebKitGetPidFunc)sym;
-            }
-        }
-    }
-
-    if (get_pid_func) {
-        return get_pid_func(view);
-    }
-    return 0;
-}
 
 GtkWidget* create_menu_icon(const char* icon_name) {
     GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
     gtk_image_set_pixel_size(GTK_IMAGE(img), 16);
     return img;
-}
-
-std::string get_process_memory_str(guint pid) {
-    if (pid == 0) return "Shared / Unknown";
-    double mb = 0;
-
-#ifdef _WIN32
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-    if (hProcess) {
-        PROCESS_MEMORY_COUNTERS pmc;
-        if (GetProcessMemoryInfo(hProcess, &pmc, sizeof(pmc))) {
-            mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
-        }
-        CloseHandle(hProcess);
-    }
-#else
-    std::string path = "/proc/" + std::to_string(pid) + "/status";
-    std::ifstream file(path);
-    std::string line;
-    while(std::getline(file, line)) {
-        if(line.find("VmRSS:") == 0) { 
-            std::stringstream ss(line);
-            std::string label, unit;
-            long kb;
-            ss >> label >> kb >> unit;
-            mb = kb / 1024.0;
-            break;
-        }
-    }
-#endif
-    
-    std::stringstream res;
-    res << std::fixed << std::setprecision(1) << mb << " MB";
-    return res.str();
 }
 
 void show_site_info_popover(GtkEntry* entry, WebKitWebView* view);
@@ -479,25 +420,23 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
             g_list_free(children);
 
             if(tab_view) {
-                guint pid = get_pid_from_webview(tab_view);
-                
-                std::string mem = "N/A";
-                if(pid > 0) mem = get_process_memory_str(pid);
-                
                 const char* title = webkit_web_view_get_title(tab_view);
                 const char* url = webkit_web_view_get_uri(tab_view);
-
+                
                 ss << "{ \"id\": " << i << ", "
                    << "\"title\": \"" << json_escape(title ? title : "Loading...") << "\", "
                    << "\"url\": \"" << json_escape(url ? url : "") << "\", "
-                   << "\"pid\": " << pid << ", "
-                   << "\"mem\": \"" << mem << "\" }";
+                   << "\"pid\": 0, "
+                   << "\"mem\": \"-\" }";
                 
                 if(i < n_pages - 1) ss << ",";
             }
         }
         ss << "]";
         run_js(view, "renderTasks(" + ss.str() + ");");
+        
+        std::string total_mem = get_total_memory_str();
+        run_js(view, "document.getElementById('total-mem').innerText = '" + total_mem + "';");
     }
     else if (type == "close_task_tab") {
         int idx = get_json_int("index");
@@ -1069,18 +1008,9 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     
     gtk_widget_set_has_tooltip(tab_header, TRUE);
     g_signal_connect(tab_header, "query-tooltip", G_CALLBACK(+[](GtkWidget* w, gint x, gint y, gboolean k, GtkTooltip* tooltip, gpointer v_ptr){
-        WebKitWebView* v = WEBKIT_WEB_VIEW(v_ptr);
+        std::string mem = get_total_memory_str();
+        std::string tip = "Total Zyro Memory: " + mem + "\n(Per-tab stats unavailable on this system)";
         
-        guint pid = get_pid_from_webview(v);
-
-        std::string tip;
-        if (pid > 0) {
-            std::string mem = get_process_memory_str(pid);
-            tip = "Process ID: " + std::to_string(pid) + "\nMemory: " + mem;
-        } else {
-            tip = "Memory usage unavailable";
-        }
-
         gtk_tooltip_set_text(tooltip, tip.c_str());
         return TRUE;
     }), view);
