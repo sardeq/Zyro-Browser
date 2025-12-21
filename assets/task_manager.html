@@ -55,40 +55,43 @@
             </tbody>
     </table>
 
-    <script>
+ <script>
         function setTheme(t) { document.body.className = 'theme-' + t; }
         
-        function renderTasks(tasks) {
+        // CHANGED: Added totalMem argument
+        function renderTasks(tasks, totalMem) {
             const tbody = document.getElementById('task-list');
             tbody.innerHTML = '';
             
             document.getElementById('total-tabs').innerText = tasks.length;
             
-            let totalMB = 0;
+            // DIRECTLY USE THE VALUE FROM C++
+            document.getElementById('total-mem').innerText = totalMem || "Calculating...";
 
             tasks.forEach(t => {
                 const tr = document.createElement('tr');
                 
-                // Parse Memory for total sum (simple approximation)
-                if(t.mem && t.mem.includes('MB')) {
-                    totalMB += parseFloat(t.mem);
+                // UX Improvement: Show "Shared" instead of 0/-
+                let memDisplay = t.mem;
+                if (memDisplay === "-" || memDisplay === "0" || memDisplay === "N/A") {
+                    memDisplay = '<span style="opacity:0.5; font-size:12px">Shared / Core</span>';
                 }
 
+                let pidDisplay = t.pid > 0 ? t.pid : '<span style="opacity:0.5">-</span>';
+
                 tr.innerHTML = `
-                    <td class="col-id">${t.pid > 0 ? t.pid : 'N/A'}</td>
+                    <td class="col-id">${pidDisplay}</td>
                     <td>
                         <div>${t.title}</div>
                         <span class="url-sub">${t.url}</span>
                     </td>
-                    <td class="col-mem">${t.mem}</td>
+                    <td class="col-mem">${memDisplay}</td>
                     <td class="col-action">
                         <button class="kill-btn" onclick="killTab(${t.id})">End Task</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
-
-            document.getElementById('total-mem').innerText = totalMB > 0 ? totalMB.toFixed(1) + " MB" : "N/A";
         }
 
         function killTab(index) {
@@ -102,7 +105,6 @@
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_tasks' }));
         }
 
-        // Auto-refresh every 2 seconds
         setInterval(refreshTasks, 2000);
 
         window.onload = () => {

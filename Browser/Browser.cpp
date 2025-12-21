@@ -433,10 +433,11 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
             }
         }
         ss << "]";
-        run_js(view, "renderTasks(" + ss.str() + ");");
         
         std::string total_mem = get_total_memory_str();
-        run_js(view, "document.getElementById('total-mem').innerText = '" + total_mem + "';");
+        
+        std::string script = "renderTasks(" + ss.str() + ", '" + total_mem + "');";
+        run_js(view, script);
     }
     else if (type == "close_task_tab") {
         int idx = get_json_int("index");
