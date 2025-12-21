@@ -15,6 +15,36 @@
 #include <dlfcn.h>
 
 
+guint get_pid_from_webview(WebKitWebView* view) {
+    typedef guint (*WebKitGetPidFunc)(WebKitWebView*);
+    static WebKitGetPidFunc get_pid_func = nullptr;
+    static bool attempted_load = false;
+
+    if (!attempted_load) {
+        attempted_load = true;
+        void* handle = dlopen("libwebkit2gtk-4.1.so", RTLD_LAZY);
+        if (!handle) handle = dlopen("libwebkit2gtk-4.1.so.0", RTLD_LAZY);
+        
+        if (handle) {
+            dlerror();
+            void* sym = dlsym(handle, "webkit_web_view_get_web_process_identifier");
+            if (sym) {
+                get_pid_func = (WebKitGetPidFunc)sym;
+            }
+        }
+    }
+
+    if (get_pid_func) {
+        return get_pid_func(view);
+    }
+    return 0;
+}
+
+GtkWidget* create_menu_icon(const char* icon_name) {
+    GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
+    gtk_image_set_pixel_size(GTK_IMAGE(img), 16);
+    return img;
+}
 
 std::string get_process_memory_str(guint pid) {
     if (pid == 0) return "Shared / Unknown";
@@ -160,18 +190,24 @@ std::vector<std::string> get_combined_suggestions(const std::string& query, cons
     return combined;
 }
 
-void on_suggestion_ready(SoupSession* session, SoupMessage* msg, gpointer user_data) {
+void on_suggestion_ready(GObject* source, GAsyncResult* res, gpointer user_data) {
+    SoupSession* session = SOUP_SESSION(source);
     SuggestionRequest* req = (SuggestionRequest*)user_data;
+    GError* error = nullptr;
+
+    GBytes* body_bytes = soup_session_send_and_read_finish(session, res, &error);
     
     std::string body = "";
-    if (msg->status_code == 200) {
-        body = msg->response_body->data;
+    if (body_bytes) {
+        gsize size;
+        const char* data = (const char*)g_bytes_get_data(body_bytes, &size);
+        body.assign(data, size);
+        g_bytes_unref(body_bytes);
     }
     
     std::vector<std::string> final_list = get_combined_suggestions(req->query, body, req->is_gtk);
 
     if (req->is_gtk) {
-        // DETECT TARGET TYPE: Handle both EntryCompletion (URL Bar) and ListStore (Search Overlay)
         GtkListStore* store = nullptr;
         if (GTK_IS_ENTRY_COMPLETION(req->target)) {
             store = GTK_LIST_STORE(gtk_entry_completion_get_model(GTK_ENTRY_COMPLETION(req->target)));
@@ -224,8 +260,11 @@ void fetch_suggestions(const std::string& query, bool is_gtk, gpointer target) {
     
     SuggestionRequest* req = new SuggestionRequest{ is_gtk, target, query };
     std::string url = settings.suggestion_api + query;
+    
     SoupMessage* msg = soup_message_new("GET", url.c_str());
-    soup_session_queue_message(soup_session, msg, on_suggestion_ready, req);
+    
+    soup_session_send_and_read_async(soup_session, msg, G_PRIORITY_DEFAULT, NULL, on_suggestion_ready, req);
+    g_object_unref(msg);
 }
 
 static void on_script_message(WebKitUserContentManager* manager, WebKitJavascriptResult* res, gpointer user_data) {
@@ -427,13 +466,8 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         std::stringstream ss; 
         ss << "[";
 
-        typedef guint (*WebKitGetPidFunc)(WebKitWebView*);
-        void* func_ptr = dlsym(RTLD_DEFAULT, "webkit_web_view_get_web_process_identifier");
-        WebKitGetPidFunc get_pid = (WebKitGetPidFunc)func_ptr;
-
         for (int i = 0; i < n_pages; i++) {
             GtkWidget* page = gtk_notebook_get_nth_page(nb, i);
-            
             GList* children = gtk_container_get_children(GTK_CONTAINER(page));
             WebKitWebView* tab_view = nullptr;
             for(GList* l = children; l; l = l->next) {
@@ -445,21 +479,19 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
             g_list_free(children);
 
             if(tab_view) {
-                guint pid = 0;
-                if(get_pid) pid = get_pid(tab_view);
+                guint pid = get_pid_from_webview(tab_view);
                 
                 std::string mem = "N/A";
-                if(pid != 0) mem = get_process_memory_str(pid);
+                if(pid > 0) mem = get_process_memory_str(pid);
                 
-
                 const char* title = webkit_web_view_get_title(tab_view);
                 const char* url = webkit_web_view_get_uri(tab_view);
 
                 ss << "{ \"id\": " << i << ", "
-                << "\"title\": \"" << json_escape(title ? title : "Loading...") << "\", "
-                << "\"url\": \"" << json_escape(url ? url : "") << "\", "
-                << "\"pid\": " << pid << ", "
-                << "\"mem\": \"" << mem << "\" }";
+                   << "\"title\": \"" << json_escape(title ? title : "Loading...") << "\", "
+                   << "\"url\": \"" << json_escape(url ? url : "") << "\", "
+                   << "\"pid\": " << pid << ", "
+                   << "\"mem\": \"" << mem << "\" }";
                 
                 if(i < n_pages - 1) ss << ",";
             }
@@ -773,13 +805,15 @@ void show_menu(GtkButton* btn, gpointer win) {
     
     GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
-    auto create_base_btn = [&](const char* label, const char* icon_name) {
+auto create_base_btn = [&](const char* label, const char* icon_name) {
         GtkWidget* btn = gtk_button_new();
         gtk_style_context_add_class(gtk_widget_get_style_context(btn), "menu-item");
         gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
         
         GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-        GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
+        
+        GtkWidget* img = create_menu_icon(icon_name);
+        
         GtkWidget* lbl = gtk_label_new(label);
         
         gtk_box_pack_start(GTK_BOX(box), img, FALSE, FALSE, 10);
@@ -1036,23 +1070,15 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_widget_set_has_tooltip(tab_header, TRUE);
     g_signal_connect(tab_header, "query-tooltip", G_CALLBACK(+[](GtkWidget* w, gint x, gint y, gboolean k, GtkTooltip* tooltip, gpointer v_ptr){
         WebKitWebView* v = WEBKIT_WEB_VIEW(v_ptr);
-        guint pid = 0;
-
-        typedef guint (*WebKitGetPidFunc)(WebKitWebView*);
         
-        void* func_ptr = dlsym(RTLD_DEFAULT, "webkit_web_view_get_web_process_identifier");
-        
-        if (func_ptr) {
-            WebKitGetPidFunc get_pid = (WebKitGetPidFunc)func_ptr;
-            pid = get_pid(v);
-        }
+        guint pid = get_pid_from_webview(v);
 
         std::string tip;
-        if (pid != 0) {
+        if (pid > 0) {
             std::string mem = get_process_memory_str(pid);
             tip = "Process ID: " + std::to_string(pid) + "\nMemory: " + mem;
         } else {
-            tip = "Memory usage unavailable\n(API restricted)";
+            tip = "Memory usage unavailable";
         }
 
         gtk_tooltip_set_text(tooltip, tip.c_str());
