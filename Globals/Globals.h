@@ -16,6 +16,7 @@ struct AppSettings {
     std::string search_engine = "https://www.google.com/search?q=";
     std::string suggestion_api = "http://suggestqueries.google.com/complete/search?client=firefox&q=";
     std::string theme = "dark";
+    std::string task_manager_url;
 };
 
 struct HistoryItem {

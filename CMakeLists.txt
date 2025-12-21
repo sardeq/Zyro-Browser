@@ -45,7 +45,7 @@ add_executable(ZyroBrowser
 )
 
 if(UNIX AND NOT APPLE)
-    target_link_libraries(ZyroBrowser ${GTK3_LIBRARIES} ${WEBKIT_LIBRARIES} ${SOUP_LIBRARIES} ${OPENSSL_LIBRARIES} ${LIBSECRET_LIBRARIES} crypto)
+    target_link_libraries(ZyroBrowser ${GTK3_LIBRARIES} ${WEBKIT_LIBRARIES} ${SOUP_LIBRARIES} ${OPENSSL_LIBRARIES} ${LIBSECRET_LIBRARIES} crypto ${CMAKE_DL_LIBS})
 elseif(WIN32)
     target_link_libraries(ZyroBrowser ${GTK3_LIBRARIES} ${WEBKIT_LIBRARIES} ${SOUP_LIBRARIES} ${OPENSSL_LIBRARIES} crypto Crypt32)
 endif()

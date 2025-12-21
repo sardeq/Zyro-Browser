@@ -12,6 +12,7 @@
 #include <cstring> 
 #include <fstream>
 #include <iomanip>
+#include <dlfcn.h>
 
 
 
@@ -395,30 +396,87 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         webkit_web_view_load_uri(view, get_json_val("url").c_str());
     }
     else if (type == "get_history") {
-        std::stringstream ss;
+            std::stringstream ss;
+            ss << "[";
+            for(size_t i=0; i<browsing_history.size(); ++i) {
+                const auto& h = browsing_history[i];
+                ss << "{ \"title\": \"" << json_escape(h.title) << "\", "
+                << "\"url\": \"" << json_escape(h.url) << "\", "
+                << "\"time\": \"" << h.time_str << "\" }";
+                if(i < browsing_history.size()-1) ss << ",";
+            }
+            ss << "]";
+            
+            std::string json_data = ss.str();
+            std::string safe_json; 
+            for(char c : json_data) {
+                if(c == '\'') safe_json += "\\'";
+                else safe_json += c;
+            }
+
+            std::string script = "renderHistory('" + safe_json + "');";
+            run_js(view, script);
+        }
+        else if (type == "clear_history") {
+            clear_all_history();
+            run_js(view, "renderHistory('[]');");
+        }
+        else if (type == "get_tasks") {
+        GtkNotebook* nb = get_notebook(global_window);
+        int n_pages = gtk_notebook_get_n_pages(nb);
+        std::stringstream ss; 
         ss << "[";
-        for(size_t i=0; i<browsing_history.size(); ++i) {
-            const auto& h = browsing_history[i];
-            ss << "{ \"title\": \"" << json_escape(h.title) << "\", "
-            << "\"url\": \"" << json_escape(h.url) << "\", "
-            << "\"time\": \"" << h.time_str << "\" }";
-            if(i < browsing_history.size()-1) ss << ",";
+
+        typedef guint (*WebKitGetPidFunc)(WebKitWebView*);
+        void* func_ptr = dlsym(RTLD_DEFAULT, "webkit_web_view_get_web_process_identifier");
+        WebKitGetPidFunc get_pid = (WebKitGetPidFunc)func_ptr;
+
+        for (int i = 0; i < n_pages; i++) {
+            GtkWidget* page = gtk_notebook_get_nth_page(nb, i);
+            
+            GList* children = gtk_container_get_children(GTK_CONTAINER(page));
+            WebKitWebView* tab_view = nullptr;
+            for(GList* l = children; l; l = l->next) {
+                if(WEBKIT_IS_WEB_VIEW(l->data)) { 
+                    tab_view = WEBKIT_WEB_VIEW(l->data); 
+                    break; 
+                }
+            }
+            g_list_free(children);
+
+            if(tab_view) {
+                guint pid = 0;
+                if(get_pid) pid = get_pid(tab_view);
+                
+                std::string mem = "N/A";
+                if(pid != 0) mem = get_process_memory_str(pid);
+                
+
+                const char* title = webkit_web_view_get_title(tab_view);
+                const char* url = webkit_web_view_get_uri(tab_view);
+
+                ss << "{ \"id\": " << i << ", "
+                << "\"title\": \"" << json_escape(title ? title : "Loading...") << "\", "
+                << "\"url\": \"" << json_escape(url ? url : "") << "\", "
+                << "\"pid\": " << pid << ", "
+                << "\"mem\": \"" << mem << "\" }";
+                
+                if(i < n_pages - 1) ss << ",";
+            }
         }
         ss << "]";
-        
-        std::string json_data = ss.str();
-        std::string safe_json; 
-        for(char c : json_data) {
-            if(c == '\'') safe_json += "\\'";
-            else safe_json += c;
-        }
-
-        std::string script = "renderHistory('" + safe_json + "');";
-        run_js(view, script);
+        run_js(view, "renderTasks(" + ss.str() + ");");
     }
-    else if (type == "clear_history") {
-        clear_all_history();
-        run_js(view, "renderHistory('[]');");
+    else if (type == "close_task_tab") {
+        int idx = get_json_int("index");
+        GtkNotebook* nb = get_notebook(global_window);
+        
+        if(idx >= 0 && idx < gtk_notebook_get_n_pages(nb)) {
+
+            gtk_notebook_remove_page(nb, idx);
+            
+            run_js(view, "refreshTasks();");
+        }
     }
 }
 
@@ -746,6 +804,7 @@ void show_menu(GtkButton* btn, gpointer win) {
     gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Passwords", "dialog-password-symbolic", settings.passwords_url), FALSE, FALSE, 0); 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("History", "document-open-recent-symbolic", settings.history_url), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Settings", "preferences-system-symbolic", settings.settings_url), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Task Manager", "utilities-system-monitor-symbolic", settings.task_manager_url), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("About Zyro", "help-about-symbolic", settings.about_url), FALSE, FALSE, 0); 
     gtk_box_pack_start(GTK_BOX(menu_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 6);
     
@@ -978,14 +1037,24 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     g_signal_connect(tab_header, "query-tooltip", G_CALLBACK(+[](GtkWidget* w, gint x, gint y, gboolean k, GtkTooltip* tooltip, gpointer v_ptr){
         WebKitWebView* v = WEBKIT_WEB_VIEW(v_ptr);
         guint pid = 0;
+
+        typedef guint (*WebKitGetPidFunc)(WebKitWebView*);
         
-        //doesnt work due to incompatibility, will be fixed later
-        //#if WEBKIT_CHECK_VERSION(2, 34, 0)
-        //    pid = webkit_web_view_get_web_process_identifier(v);
-        //#endif
+        void* func_ptr = dlsym(RTLD_DEFAULT, "webkit_web_view_get_web_process_identifier");
         
-        std::string mem = get_process_memory_str(pid);
-        std::string tip = "Process ID: " + std::to_string(pid) + "\nMemory: " + mem;
+        if (func_ptr) {
+            WebKitGetPidFunc get_pid = (WebKitGetPidFunc)func_ptr;
+            pid = get_pid(v);
+        }
+
+        std::string tip;
+        if (pid != 0) {
+            std::string mem = get_process_memory_str(pid);
+            tip = "Process ID: " + std::to_string(pid) + "\nMemory: " + mem;
+        } else {
+            tip = "Memory usage unavailable\n(API restricted)";
+        }
+
         gtk_tooltip_set_text(tooltip, tip.c_str());
         return TRUE;
     }), view);

@@ -118,4 +118,5 @@ void load_data() {
     settings.downloads_url = "file://" + base + "downloads.html";
     settings.passwords_url = "file://" + base + "passwords.html";
     settings.about_url = "file://" + base + "about.html";
+    settings.task_manager_url = "file://" + base + "task_manager.html";
 }
