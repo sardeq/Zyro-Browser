@@ -181,3 +181,18 @@ void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
     lastTotalUser = totalUser; lastTotalUserLow = totalUserLow; lastTotalSys = totalSys; lastTotalIdle = totalIdle;
 #endif
 }
+
+std::string get_process_name(int pid) {
+#ifdef _WIN32
+    return ""; // Windows later
+#else
+    std::string path = "/proc/" + std::to_string(pid) + "/comm";
+    std::ifstream f(path);
+    std::string name;
+    if (f.is_open()) {
+        std::getline(f, name);
+        name.erase(std::remove(name.begin(), name.end(), '\n'), name.end());
+    }
+    return name;
+#endif
+}

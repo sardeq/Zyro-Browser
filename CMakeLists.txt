@@ -16,6 +16,8 @@ if(UNIX AND NOT APPLE)
 endif()
 
 include_directories(
+    ${WEBKIT_INCLUDE_DIRS} 
+    ${SOUP_INCLUDE_DIRS} 
     ${CMAKE_SOURCE_DIR}/Browser
     ${CMAKE_SOURCE_DIR}/Downloads
     ${CMAKE_SOURCE_DIR}/Globals
@@ -23,8 +25,6 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Storage
     ${CMAKE_SOURCE_DIR}/Utils
     ${GTK3_INCLUDE_DIRS} 
-    ${WEBKIT_INCLUDE_DIRS} 
-    ${SOUP_INCLUDE_DIRS} 
     ${OPENSSL_INCLUDE_DIRS}
 )
 

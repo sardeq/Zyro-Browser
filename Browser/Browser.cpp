@@ -404,6 +404,18 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         else if (type == "get_tasks") {
         GtkNotebook* nb = get_notebook(global_window);
         int n_pages = gtk_notebook_get_n_pages(nb);
+        
+        std::vector<int> all_children = get_child_pids();
+        std::vector<int> web_pids;
+        
+        for (int pid : all_children) {
+            std::string name = get_process_name(pid);
+            if (name.find("Web") != std::string::npos && name.find("Network") == std::string::npos) {
+                web_pids.push_back(pid);
+            }
+        }
+        std::sort(web_pids.begin(), web_pids.end());
+
         std::stringstream ss; 
         ss << "[";
 
@@ -423,11 +435,22 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
                 const char* title = webkit_web_view_get_title(tab_view);
                 const char* url = webkit_web_view_get_uri(tab_view);
                 
+                guint pid = 0;
+                std::string mem = "-";
+                
+                if (i < web_pids.size()) {
+                    pid = web_pids[i];
+                    long kb = get_pid_rss_kb(pid);
+                    std::stringstream mss;
+                    mss << std::fixed << std::setprecision(1) << (kb / 1024.0) << " MB";
+                    mem = mss.str();
+                }
+
                 ss << "{ \"id\": " << i << ", "
                    << "\"title\": \"" << json_escape(title ? title : "Loading...") << "\", "
                    << "\"url\": \"" << json_escape(url ? url : "") << "\", "
-                   << "\"pid\": 0, "
-                   << "\"mem\": \"-\" }";
+                   << "\"pid\": " << pid << ", "
+                   << "\"mem\": \"" << mem << "\" }";
                 
                 if(i < n_pages - 1) ss << ",";
             }
@@ -435,7 +458,6 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         ss << "]";
         
         std::string total_mem = get_total_memory_str();
-        
         std::string script = "renderTasks(" + ss.str() + ", '" + total_mem + "');";
         run_js(view, script);
     }
