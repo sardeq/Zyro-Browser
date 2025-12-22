@@ -230,6 +230,8 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
 
     std::string type = get_json_val("type");
     WebKitWebView* view = WEBKIT_WEB_VIEW(user_data);
+    WebKitWebContext* ctx = webkit_web_view_get_context(view);
+    bool is_incognito = webkit_web_context_is_ephemeral(ctx);
 
     if (type == "search") {
         std::string query = get_json_val("query");
@@ -262,13 +264,17 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         }
     }
     else if (type == "get_bookmarks") {
-        std::stringstream ss; ss << "[";
-        for(size_t i=0; i<bookmarks_list.size(); ++i) {
-            ss << "{ \"title\": \"" << bookmarks_list[i].title << "\", \"url\": \"" << bookmarks_list[i].url << "\" }";
-            if(i < bookmarks_list.size()-1) ss << ",";
+        if (is_incognito) {
+            run_js(view, "renderBookmarks('[]');");
+        } else {
+            std::stringstream ss; ss << "[";
+            for(size_t i=0; i<bookmarks_list.size(); ++i) {
+                ss << "{ \"title\": \"" << bookmarks_list[i].title << "\", \"url\": \"" << bookmarks_list[i].url << "\" }";
+                if(i < bookmarks_list.size()-1) ss << ",";
+            }
+            ss << "]";
+            run_js(view, "renderBookmarks('" + ss.str() + "');");
         }
-        ss << "]";
-        run_js(view, "renderBookmarks('" + ss.str() + "');");
     }
     else if (type == "delete_bookmark") {
         int idx = get_json_int("index");
@@ -286,13 +292,17 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         }
     }
     else if (type == "get_shortcuts") {
-        std::stringstream ss; ss << "[";
-        for(size_t i=0; i<shortcuts_list.size(); ++i) {
-            ss << "{ \"name\": \"" << shortcuts_list[i].name << "\", \"url\": \"" << shortcuts_list[i].url << "\" }";
-            if(i < shortcuts_list.size()-1) ss << ",";
+        if (is_incognito) {
+             run_js(view, "renderShortcuts([]);");
+        } else {
+            std::stringstream ss; ss << "[";
+            for(size_t i=0; i<shortcuts_list.size(); ++i) {
+                ss << "{ \"name\": \"" << shortcuts_list[i].name << "\", \"url\": \"" << shortcuts_list[i].url << "\" }";
+                if(i < shortcuts_list.size()-1) ss << ",";
+            }
+            ss << "]";
+            run_js(view, "renderShortcuts(" + ss.str() + ");");
         }
-        ss << "]";
-        run_js(view, "renderShortcuts(" + ss.str() + ");");
     }
     else if (type == "add_shortcut") {
         shortcuts_list.push_back({ get_json_val("name"), get_json_val("url") });
@@ -376,6 +386,9 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         webkit_web_view_load_uri(view, get_json_val("url").c_str());
     }
     else if (type == "get_history") {
+        if (is_incognito) {
+            run_js(view, "renderHistory('[]');");
+        } else {
             std::stringstream ss;
             ss << "[";
             for(size_t i=0; i<browsing_history.size(); ++i) {
@@ -397,6 +410,7 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
             std::string script = "renderHistory('" + safe_json + "');";
             run_js(view, script);
         }
+        }
         else if (type == "clear_history") {
             clear_all_history();
             run_js(view, "renderHistory('[]');");
@@ -413,7 +427,6 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
             GList* children = gtk_container_get_children(GTK_CONTAINER(page));
             WebKitWebView* tab_view = nullptr;
             
-            // Find the WebKitWebView inside the page container
             for(GList* l = children; l; l = l->next) {
                 if(WEBKIT_IS_WEB_VIEW(l->data)) { 
                     tab_view = WEBKIT_WEB_VIEW(l->data); 
@@ -426,13 +439,10 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
                 const char* title = webkit_web_view_get_title(tab_view);
                 const char* url = webkit_web_view_get_uri(tab_view);
                 
-                // CHANGED: Get the PID directly from the object data
-                // This data is set by the 'pid-update' message handler we added earlier
                 int pid = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(tab_view), "web_pid"));
                 
                 std::string mem = "-";
                 
-                // Only calculate memory if we have a valid PID from the extension
                 if (pid > 0) {
                     long kb = get_pid_rss_kb(pid);
                     std::stringstream mss;
@@ -465,6 +475,10 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
             
             run_js(view, "refreshTasks();");
         }
+    }
+    else if (type == "get_incognito_status") {
+        std::string status = is_incognito ? "true" : "false";
+        run_js(view, "setIncognitoMode(" + status + ");");
     }
 }
 
@@ -796,17 +810,31 @@ auto create_base_btn = [&](const char* label, const char* icon_name) {
         return btn;
     };
 
+    struct MenuAction { GtkWidget* win; std::string url; };
+
     auto mk_url_item = [&](const char* label, const char* icon, const std::string& url) {
         GtkWidget* b = create_base_btn(label, icon);
+        
+        MenuAction* action = new MenuAction{ (GtkWidget*)win, url };
+
         g_signal_connect(b, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data){
-            std::string* u = (std::string*)data;
-            create_new_tab(global_window, *u, global_context);
-            delete u; 
-        }), new std::string(url));
+            MenuAction* a = (MenuAction*)data;
+            WebKitWebView* active = get_active_webview(a->win);
+            WebKitWebContext* ctx = active ? webkit_web_view_get_context(active) : global_context;
+            
+            create_new_tab(a->win, a->url, ctx);
+            delete a; 
+        }), action);
         return b;
     };
 
     gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("New Tab", "tab-new-symbolic", settings.home_url), FALSE, FALSE, 0);
+    GtkWidget* incognito_btn = create_base_btn("New Incognito Window", "user-invisible-symbolic");
+    g_signal_connect(incognito_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer){
+        WebKitWebContext* ephemeral_ctx = webkit_web_context_new_ephemeral();
+        create_window(ephemeral_ctx);
+    }), NULL);
+    gtk_box_pack_start(GTK_BOX(menu_box), incognito_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(menu_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 6);
     gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Downloads", "folder-download-symbolic", settings.downloads_url), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(menu_box), mk_url_item("Passwords", "dialog-password-symbolic", settings.passwords_url), FALSE, FALSE, 0); 
@@ -1371,19 +1399,19 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
 void create_window(WebKitWebContext* ctx) {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
-    if (!webkit_web_context_is_ephemeral(ctx)) {
+    bool is_incognito = webkit_web_context_is_ephemeral(ctx);
+
+    if (!is_incognito) {
         global_window = win;
-    }
-    
-    if (webkit_web_context_is_ephemeral(ctx)) {
+        g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    } else {
         gtk_window_set_title(GTK_WINDOW(win), "Zyro (Incognito)");
         gtk_style_context_add_class(gtk_widget_get_style_context(win), "incognito");
-    } else {
-        gtk_window_set_title(GTK_WINDOW(win), "Zyro");
     }
 
-    gtk_window_set_default_size(GTK_WINDOW(win), 1200, 800);
+    if (!is_incognito) gtk_window_set_title(GTK_WINDOW(win), "Zyro");
     
+    gtk_window_set_default_size(GTK_WINDOW(win), 1200, 800);
     g_signal_connect(win, "key-press-event", G_CALLBACK(on_key_press), NULL);
     
     std::string style_path = get_assets_path() + "style.css";
@@ -1404,8 +1432,11 @@ void create_window(WebKitWebContext* ctx) {
 
     gtk_notebook_set_action_widget(GTK_NOTEBOOK(nb), add_tab_btn, GTK_PACK_END);
 
-    g_signal_connect(add_tab_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer win){
-        create_new_tab(GTK_WIDGET(win), settings.home_url, global_context);
+    g_signal_connect(add_tab_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data){
+        GtkWidget* w = GTK_WIDGET(data);
+        WebKitWebView* v = get_active_webview(w);
+        WebKitWebContext* c = v ? webkit_web_view_get_context(v) : global_context;
+        create_new_tab(w, settings.home_url, c);
     }), win);
 
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);

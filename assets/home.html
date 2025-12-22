@@ -56,10 +56,30 @@
         .context-item { padding: 8px 12px; font-size: 13px; cursor: pointer; color: var(--text); }
         .context-item:hover { background: #3c4043; }
         .context-item.delete { color: #e06c75; }
+
+        .incognito-badge {
+            border: 1px solid #333;
+            background: #25222b;
+            color: #a142f4;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            margin-bottom: 20px;
+            display: none; /* Hidden by default */
+            align-items: center;
+            gap: 8px;
+        }
     </style>
 </head>
 <body class="theme-dark">
     <div class="blob"></div>
+    <div class="incognito-badge" id="incognito-badge">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 12h20M9.5 12l-2-6 3.5-3 3.5 3-2 6"></path> <circle cx="6" cy="15" r="3"></circle>
+            <circle cx="18" cy="15" r="3"></circle>
+        </svg>
+        Incognito Mode
+    </div>
     <h1>Zyro Browser</h1>
     
     <div class="search-container">
@@ -304,10 +324,20 @@
              openShortcutModal(selectedShortcutIndex);
         };
 
-        // --- Initialize ---
+        function setIncognitoMode(isIncognito) {
+            if (isIncognito) {
+                document.getElementById('incognito-badge').style.display = 'flex';
+                // Optional: Hide widgets or shortcuts grid if you want a cleaner look
+                document.getElementById('shortcuts-grid').style.display = 'none';
+                document.querySelector('.widgets').style.display = 'none';
+            }
+        }
+
         window.onload = () => {
-            // Send all startup requests here
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_theme' }));
+            
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_incognito_status' }));
+            
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_shortcuts' }));
         }
     </script>
