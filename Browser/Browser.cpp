@@ -1045,8 +1045,27 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     
     gtk_widget_set_has_tooltip(tab_header, TRUE);
     g_signal_connect(tab_header, "query-tooltip", G_CALLBACK(+[](GtkWidget* w, gint x, gint y, gboolean k, GtkTooltip* tooltip, gpointer v_ptr){
-        std::string mem = get_total_memory_str();
-        std::string tip = "Total Zyro Memory: " + mem + "\n(Per-tab stats unavailable on this system)";
+        WebKitWebView* view = WEBKIT_WEB_VIEW(v_ptr);
+        
+        std::string total_mem = get_total_memory_str();
+        
+        int pid = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(view), "web_pid"));
+        std::string tab_mem = "Calculating...";
+        
+        if (pid > 0) {
+            long kb = get_pid_rss_kb(pid);
+            if (kb > 0) {
+                std::stringstream ss;
+                ss << std::fixed << std::setprecision(1) << (kb / 1024.0) << " MB";
+                tab_mem = ss.str();
+            } else {
+                tab_mem = "0 MB (Sleeping/Shared)";
+            }
+        } else {
+            tab_mem = "Waiting for process...";
+        }
+
+        std::string tip = "Tab Memory: " + tab_mem + "\nTotal Zyro: " + total_mem + "\nPID: " + std::to_string(pid);
         
         gtk_tooltip_set_text(tooltip, tip.c_str());
         return TRUE;
