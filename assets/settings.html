@@ -4,129 +4,301 @@
     <meta charset="UTF-8">
     <title>Settings</title>
     <style>
-        :root { --bg: #1a1b1e; --panel: #202124; --text: #e8eaed; }
-        body.theme-light { --bg: #f1f3f4; --panel: #ffffff; --text: #202124; }
+        :root { 
+            --bg: #1a1b1e; 
+            --panel: #202124; 
+            --text: #e8eaed; 
+            --accent: #8ab4f8;
+            --border: #333;
+            --hover: #292a2d;
+            --input-bg: #303134;
+        }
         
-        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; transition: background 0.3s; }
-        h1 { border-bottom: 1px solid #333; padding-bottom: 15px; }
-        .setting-group { margin-bottom: 30px; background: var(--panel); padding: 20px; border-radius: 12px; }
-        label { display: block; margin-bottom: 10px; font-weight: bold; }
-        p { color: #9aa0a6; font-size: 14px; margin-top: 0; }
+        body.theme-light { 
+            --bg: #f1f3f4; 
+            --panel: #ffffff; 
+            --text: #202124; 
+            --accent: #1a73e8;
+            --border: #ddd;
+            --hover: #f1f3f4;
+            --input-bg: #f8f9fa;
+        }
         
-        select { 
+        body { 
+            background: var(--bg); 
+            color: var(--text); 
+            font-family: 'Segoe UI', sans-serif; 
+            margin: 0; 
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+            transition: background 0.3s;
+        }
+
+        /* --- Sidebar --- */
+        .sidebar {
+            width: 250px;
+            background: var(--panel);
+            border-right: 1px solid var(--border);
+            padding: 20px 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar h2 {
+            margin: 0 0 20px 20px;
+            font-size: 20px;
+            font-weight: 500;
+        }
+
+        .nav-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 15px;
+            display: flex;
+            align-items: center;
+            transition: background 0.2s;
+            color: var(--text);
+            opacity: 0.8;
+        }
+
+        .nav-item:hover {
+            background-color: var(--hover);
+            opacity: 1;
+        }
+
+        .nav-item.active {
+            background-color: rgba(138, 180, 248, 0.1); 
+            color: var(--accent);
+            border-left: 3px solid var(--accent);
+            opacity: 1;
+            font-weight: 500;
+        }
+
+        /* --- Content --- */
+        .content {
+            flex: 1;
+            padding: 40px;
+            overflow-y: auto;
+        }
+
+        .tab-panel {
+            display: none;
+            max-width: 700px;
+        }
+        .tab-panel.active { display: block; }
+
+        h1 { margin-top: 0; font-size: 24px; margin-bottom: 30px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+
+        .setting-group { margin-bottom: 30px; }
+        label { display: block; margin-bottom: 8px; font-weight: 500; }
+        p.desc { color: #9aa0a6; font-size: 13px; margin-top: -4px; margin-bottom: 12px; }
+
+        /* --- Input & Dropdown Styling --- */
+        input[type="text"], select { 
             width: 100%; 
             padding: 10px; 
-            background-color: #303134; 
-            color: #e8eaed; 
-            border: 1px solid #444; 
+            background-color: var(--input-bg); 
+            color: var(--text); 
+            border: 1px solid var(--border); 
             border-radius: 6px; 
             outline: none; 
-            cursor: pointer;
-            appearance: none; 
+            box-sizing: border-box;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        /* Custom Dropdown Arrow & Colors */
+        select {
+            appearance: none;
             -webkit-appearance: none;
-            background-image: url('data:image/svg+xml;utf8,<svg fill="white" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+            background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%238ab4f8%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
             background-repeat: no-repeat;
-            background-position: right 10px top 50%;
+            background-position: right 12px center;
+            background-size: 10px;
+            padding-right: 30px;
         }
-        
+
         /* Force options to have dark background */
-        select option {
-            background-color: #303134;
-            color: #e8eaed;
+        option {
+            background-color: var(--panel);
+            color: var(--text);
+            padding: 10px;
         }
-        
+
+        select:focus, input:focus { border-color: var(--accent); }
+
         button { 
-            background: #8ab4f8; color: #000; border: none; padding: 10px 20px; 
-            border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 20px; 
+            background: var(--accent); color: #1a1b1e; border: none; padding: 10px 20px; 
+            border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
+            transition: opacity 0.2s;
         }
         button:hover { opacity: 0.9; }
+        
+        .btn-danger { background: #e06c75; color: white; }
 
-        .danger-zone { border: 1px solid #5f3b3b; }
-        .btn-danger { background: #e06c75; color: white; margin-top: 0; }
-
-        /* Custom Toast Notification */
+        /* --- Shortcuts Table --- */
+        .shortcuts-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--panel);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .shortcuts-table th, .shortcuts-table td {
+            text-align: left;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .shortcuts-table th {
+            background: rgba(0,0,0,0.2);
+            font-weight: 600;
+            color: var(--accent);
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .shortcuts-table tr:last-child td { border-bottom: none; }
+        .key-badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            color: var(--text);
+        }
+        
+        /* Toast */
         #toast {
             visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center;
-            border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px;
-            transform: translateX(-50%); box-shadow: 0 4px 15px rgba(0,0,0,0.5); font-size: 16px;
+            border-radius: 8px; padding: 12px; position: fixed; z-index: 100; left: 50%; bottom: 30px;
+            transform: translateX(-50%); box-shadow: 0 4px 15px rgba(0,0,0,0.5); font-size: 14px;
         }
-        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
-        
+        #toast.show { visibility: visible; animation: fadein 0.3s, fadeout 0.3s 2.5s; }
         @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
         @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
     </style>
 </head>
 <body class="theme-dark">
-    <h1>Settings</h1>
 
-    <div class="setting-group">
-        <label>Search Engine</label>
-        <select id="engine">
-            <option value="https://www.google.com/search?q=">Google</option>
-            <option value="https://duckduckgo.com/?q=">DuckDuckGo</option>
-            <option value="https://www.bing.com/search?q=">Bing</option>
-        </select>
+    <div class="sidebar">
+        <h2>Settings</h2>
+        <div class="nav-item active" onclick="showTab('general', this)">General</div>
+        <div class="nav-item" onclick="showTab('shortcuts', this)">Keyboard Shortcuts</div>
+        <div class="nav-item" onclick="showTab('privacy', this)">Privacy</div>
     </div>
 
-    <div class="setting-group">
-        <label>Theme</label>
-        <select id="theme">
-            <option value="dark">Dark Mode</option>
-            <option value="light">Light Mode</option>
-        </select>
+    <div class="content">
+        
+        <div id="general" class="tab-panel active">
+            <h1>General</h1>
+            
+            <div class="setting-group">
+                <label>Search Engine</label>
+                <p class="desc">Select the default search engine for the address bar.</p>
+                <select id="engine" onchange="saveGeneralSettings()">
+                    <option value="https://www.google.com/search?q=">Google</option>
+                    <option value="https://duckduckgo.com/?q=">DuckDuckGo</option>
+                    <option value="https://www.bing.com/search?q=">Bing</option>
+                </select>
+            </div>
+
+            <div class="setting-group">
+                <label>Appearance</label>
+                <p class="desc">Choose your preferred color theme.</p>
+                <select id="theme" onchange="saveGeneralSettings()">
+                    <option value="dark">Dark Mode</option>
+                    <option value="light">Light Mode</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="shortcuts" class="tab-panel">
+            <h1>Keyboard Shortcuts</h1>
+            <p class="desc">Reference list of available keyboard commands.</p>
+            
+            <table class="shortcuts-table">
+                <thead>
+                    <tr>
+                        <th>Action</th>
+                        <th>Shortcut</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>New Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">T</span></td></tr>
+                    <tr><td>Close Current Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">W</span></td></tr>
+                    <tr><td>Reload Page</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">R</span> / <span class="key-badge">F5</span></td></tr>
+                    <tr><td>Focus Address Bar / Search</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">L</span> / <span class="key-badge">Alt</span> + <span class="key-badge">L</span></td></tr>
+                    <tr><td>Next Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">Tab</span> / <span class="key-badge">PageDown</span></td></tr>
+                    <tr><td>Previous Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">PageUp</span></td></tr>
+                    <tr><td>Go Back</td><td><span class="key-badge">Alt</span> + <span class="key-badge">Left</span></td></tr>
+                    <tr><td>Go Forward</td><td><span class="key-badge">Alt</span> + <span class="key-badge">Right</span></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="privacy" class="tab-panel">
+            <h1>Privacy & Security</h1>
+            
+            <div class="setting-group">
+                <label>Clear Browsing Data</label>
+                <p class="desc">Clear temporary files, cookies, and cached images to free up space or fix issues.</p>
+                <button class="btn-danger" onclick="clearCache()">Clear Cache & Cookies</button>
+            </div>
+        </div>
+
     </div>
 
-    <button onclick="saveSettings()">Save Changes</button>
-
-    <br><br>
-
-    <div class="setting-group danger-zone">
-        <label>Privacy & Data</label>
-        <p>Clear temporary files, cookies, and cached images.</p>
-        <button class="btn-danger" onclick="clearCache()">Clear Cache & Cookies</button>
-    </div>
-
-    <div id="toast">Settings Saved!</div>
+    <div id="toast">Settings Saved</div>
 
     <script>
+        function showTab(tabId, navItem) {
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            
+            document.getElementById(tabId).classList.add('active');
+            navItem.classList.add('active');
+        }
+
         function showToast(msg) {
-            var x = document.getElementById("toast");
+            const x = document.getElementById("toast");
             x.innerText = msg;
             x.className = "show";
-            setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
+            setTimeout(() => x.className = x.className.replace("show", ""), 3000);
+        }
+
+        function loadCurrentSettings(engine, theme) {
+            document.getElementById('engine').value = engine;
+            document.getElementById('theme').value = theme;
+            setTheme(theme);
         }
 
         function setTheme(themeName) {
             document.body.className = 'theme-' + themeName;
-            // Also update the dropdown to match
             document.getElementById('theme').value = themeName;
         }
 
-        function saveSettings() {
+        function saveGeneralSettings() {
             const engine = document.getElementById('engine').value;
             const theme = document.getElementById('theme').value;
-            
-            // Immediate UI update (optimistic)
             setTheme(theme);
-
+            
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({
                 type: 'save_settings',
                 engine: engine,
                 theme: theme
             }));
-            
-            showToast('Settings Saved!');
+            showToast('Preferences Saved');
         }
 
         function clearCache() {
-            if(confirm("Are you sure? This cannot be undone.")) {
+            if(confirm("Are you sure you want to clear all cache and cookies?")) {
                 window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'clear_cache' }));
             }
-        }
-
-        function loadCurrentSettings(engine, theme) {
-            document.getElementById('engine').value = engine;
-            setTheme(theme);
         }
 
         window.onload = () => {
