@@ -16,3 +16,5 @@ std::string json_escape(const std::string& s);
 std::string get_process_name(int pid);
 std::vector<int> get_child_pids();
 long get_pid_rss_kb(int pid);
+
+void apply_browser_theme(const std::string& theme_name);

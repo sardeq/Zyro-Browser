@@ -4,114 +4,219 @@
     <meta charset="UTF-8">
     <title>New Tab</title>
     <style>
-        :root { --bg: #1a1b1e; --accent: #8ab4f8; --text: #e8eaed; --panel: #202124; }
-        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; transition: background 0.3s; }
+        :root { 
+            --bg: #1a1b1e; --accent: #8ab4f8; --text: #e8eaed; --panel: #202124; 
+            --shadow: rgba(0,0,0,0.5); --overlay: rgba(0,0,0,0.8);
+        }
         
-        body.theme-light { --bg: #f1f3f4; --text: #202124; --panel: #ffffff; --accent: #1a73e8; }
-        
-        h1 { font-size: 4rem; margin-bottom: 20px; font-weight: 300; letter-spacing: -2px; }
-        
+        body { 
+            margin: 0; background: var(--bg); color: var(--text); 
+            font-family: 'Segoe UI', sans-serif; display: flex; 
+            flex-direction: column; align-items: center; justify-content: center; 
+            height: 100vh; overflow: hidden; transition: background 0.3s; 
+            background-size: cover; background-position: center;
+        }
+
+        /* --- Theme definitions for content --- */
+        body.theme-light { --bg: #f1f3f4; --text: #202124; --panel: #ffffff; --accent: #1a73e8; --shadow: rgba(0,0,0,0.1); --overlay: rgba(255,255,255,0.8); }
+        body.theme-midnight { --bg: #000; --text: #fff; --panel: #111; --accent: #00ffcc; }
+        body.theme-ocean { --bg: #0f1c2e; --text: #ccd6f6; --panel: #162438; --accent: #64ffda; }
+        body.theme-sunset { --bg: #2d1b2e; --text: #fff; --panel: #45283c; --accent: #ff9e64; }
+
+        h1 { font-size: 4rem; margin-bottom: 20px; font-weight: 300; letter-spacing: -2px; text-shadow: 0 4px 10px var(--shadow); }
+
         /* Search Container */
         .search-container { width: 600px; max-width: 90%; position: relative; z-index: 10; }
-        .search-box { width: 100%; background: var(--panel); border-radius: 30px; padding: 12px 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: flex; align-items: center; box-sizing: border-box; transition: transform 0.2s, box-shadow 0.2s; }
-        .search-box.open { border-radius: 24px 24px 0 0; box-shadow: 0 4px 5px rgba(0,0,0,0.1); }
+        .search-box { width: 100%; background: var(--panel); border-radius: 30px; padding: 12px 24px; box-shadow: 0 4px 15px var(--shadow); display: flex; align-items: center; box-sizing: border-box; transition: transform 0.2s, box-shadow 0.2s; }
+        .search-box.open { border-radius: 24px 24px 0 0; }
         input { flex: 1; background: transparent; border: none; font-size: 18px; color: var(--text); outline: none; margin-left: 10px; }
         
         /* Suggestions */
-        .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: var(--panel); border-top: 1px solid #333; border-radius: 0 0 24px 24px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); display: none; flex-direction: column; overflow: hidden; }
+        .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: var(--panel); border-top: 1px solid #333; border-radius: 0 0 24px 24px; box-shadow: 0 10px 20px var(--shadow); display: none; flex-direction: column; overflow: hidden; }
         body.theme-light .suggestions { border-top: 1px solid #ddd; }
         .suggestion-item { padding: 10px 24px; cursor: pointer; display: flex; align-items: center; }
         .suggestion-item:hover { background-color: rgba(138, 180, 248, 0.1); }
         .suggestion-item svg { margin-right: 15px; opacity: 0.5; width: 16px; height: 16px; }
 
         /* Widgets */
-        .widgets { margin-top: 60px; display: flex; gap: 20px; z-index: 1; }
-        .widget { background: var(--panel); padding: 15px 25px; border-radius: 16px; min-width: 140px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .widgets { margin-top: 60px; display: flex; gap: 20px; z-index: 1; transition: opacity 0.3s; }
+        .widget { background: var(--panel); padding: 15px 25px; border-radius: 16px; min-width: 140px; text-align: center; box-shadow: 0 4px 10px var(--shadow); backdrop-filter: blur(5px); }
         .widget h3 { margin: 0; font-size: 14px; opacity: 0.7; }
         .widget .value { font-size: 24px; font-weight: bold; color: var(--accent); margin-top: 5px; }
-        
-        .blob { position: absolute; width: 600px; height: 600px; background: radial-gradient(circle, var(--accent) 0%, transparent 70%); opacity: 0.05; z-index: -1; border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%); }
-    
-        /* Shortcuts Grid */
+
+        .hidden { display: none !important; }
+
+        /* Shortcuts */
         .shortcuts-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; width: 560px; justify-items: center; margin-top: 30px; }
         .shortcut-item { display: flex; flex-direction: column; align-items: center; width: 112px; cursor: pointer; padding: 10px; border-radius: 8px; transition: background 0.2s; text-decoration: none; color: inherit; position: relative; }
         .shortcut-item:hover { background: rgba(255,255,255,0.1); }
-
-        .icon-circle { width: 48px; height: 48px; background: var(--panel); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); overflow: hidden; }
+        .icon-circle { width: 48px; height: 48px; background: var(--panel); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; box-shadow: 0 2px 6px var(--shadow); overflow: hidden; }
         .icon-circle img { width: 24px; height: 24px; border-radius: 4px; }
-        .shortcut-name { font-size: 12px; text-align: center; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .shortcut-name { font-size: 12px; text-align: center; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px var(--shadow); }
 
-        /* Modal */
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 1000; }
-        .modal { background: var(--panel); padding: 24px; border-radius: 12px; width: 320px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); border: 1px solid #444; }
-        .modal h2 { margin: 0 0 20px 0; font-size: 18px; font-weight: 500; }
-        .modal input { width: 100%; background: #303134; border: 1px solid #444; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 14px; margin-left: 0; box-sizing: border-box; color: white; }
-        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
-        .btn { padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; }
+        /* Settings Icon */
+        .settings-cog {
+            position: fixed; top: 20px; right: 20px;
+            width: 40px; height: 40px;
+            background: var(--panel); border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; box-shadow: 0 2px 10px var(--shadow);
+            z-index: 50; transition: transform 0.3s;
+        }
+        .settings-cog:hover { transform: rotate(90deg); }
+        .settings-cog svg { width: 20px; height: 20px; color: var(--text); }
+
+        /* Modals */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--overlay); display: none; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(3px); }
+        .modal { background: var(--panel); padding: 0; border-radius: 12px; width: 500px; box-shadow: 0 20px 40px var(--shadow); border: 1px solid #444; overflow: hidden; display: flex; flex-direction: column; max-height: 80vh; }
+        
+        /* Settings Modal Specifics */
+        .modal-header { padding: 20px; border-bottom: 1px solid #444; display: flex; justify-content: space-between; align-items: center; }
+        .modal-header h2 { margin: 0; font-size: 18px; }
+        .close-btn { background: none; border: none; color: var(--text); cursor: pointer; font-size: 20px; }
+        
+        .modal-body { padding: 0; display: flex; flex: 1; overflow: hidden; }
+        .modal-sidebar { width: 140px; background: rgba(0,0,0,0.2); border-right: 1px solid #444; padding: 10px 0; }
+        .modal-tab { padding: 10px 20px; cursor: pointer; font-size: 14px; color: var(--text); opacity: 0.7; transition: 0.2s; }
+        .modal-tab:hover { opacity: 1; background: rgba(255,255,255,0.05); }
+        .modal-tab.active { opacity: 1; border-left: 3px solid var(--accent); background: rgba(138, 180, 248, 0.1); font-weight: bold; }
+        
+        .modal-content-area { flex: 1; padding: 20px; overflow-y: auto; }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+        
+        .control-group { margin-bottom: 20px; }
+        .control-group label { display: block; margin-bottom: 8px; font-weight: 500; }
+        
+        /* Custom Inputs */
+        select, input[type="text"] { width: 100%; padding: 8px; background: #303134; border: 1px solid #555; border-radius: 4px; color: white; margin-bottom: 10px; box-sizing: border-box; }
+        
+        .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #333; }
+        .toggle-row:last-child { border-bottom: none; }
+        
+        /* Toggle Switch */
+        .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #555; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--accent); }
+        input:checked + .slider:before { transform: translateX(18px); }
+
+        .btn { padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; margin-top: 10px; }
         .btn-primary { background: var(--accent); color: #1a1b1e; }
-        .btn-ghost { background: transparent; color: var(--accent); }
-
-        /* Context Menu */
+        
+        /* File Upload */
+        .file-upload { border: 2px dashed #555; padding: 20px; text-align: center; border-radius: 8px; cursor: pointer; transition: 0.2s; margin-top: 10px; }
+        .file-upload:hover { border-color: var(--accent); background: rgba(138, 180, 248, 0.05); }
+        
+        /* Context Menu (for shortcuts) */
         .context-menu { position: fixed; background: #292a2d; border: 1px solid #444; border-radius: 4px; padding: 4px 0; min-width: 120px; display: none; z-index: 2000; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
         .context-item { padding: 8px 12px; font-size: 13px; cursor: pointer; color: var(--text); }
         .context-item:hover { background: #3c4043; }
         .context-item.delete { color: #e06c75; }
 
-        .incognito-badge {
-            border: 1px solid #333;
-            background: #25222b;
-            color: #a142f4;
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-size: 14px;
-            margin-bottom: 20px;
-            display: none; /* Hidden by default */
-            align-items: center;
-            gap: 8px;
-        }
+        .incognito-badge { display: none; background: #25222b; color: #a142f4; padding: 6px 16px; border-radius: 20px; margin-bottom: 20px; align-items: center; gap: 8px; border: 1px solid #333; }
     </style>
 </head>
 <body class="theme-dark">
-    <div class="blob"></div>
-    <div class="incognito-badge" id="incognito-badge">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M2 12h20M9.5 12l-2-6 3.5-3 3.5 3-2 6"></path> <circle cx="6" cy="15" r="3"></circle>
-            <circle cx="18" cy="15" r="3"></circle>
-        </svg>
-        Incognito Mode
+    
+    <div class="settings-cog" onclick="openSettings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
     </div>
+
+    <div class="incognito-badge" id="incognito-badge">Incognito Mode</div>
     <h1>Zyro Browser</h1>
     
     <div class="search-container">
         <div class="search-box" id="sb">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <input type="text" id="search" placeholder="Search the web..." autocomplete="off" autofocus>
         </div>
         <div class="suggestions" id="suggestions"></div>
     </div>
 
-    <div class="shortcuts-grid" id="shortcuts-grid">
-        <div class="shortcut-item" onclick="openShortcutModal()">
-            <div class="icon-circle add-btn">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </div>
-            <div class="shortcut-name">Add shortcut</div>
-        </div>
-    </div>
+    <div class="shortcuts-grid" id="shortcuts-grid"></div>
 
     <div class="widgets">
-        <div class="widget"> <h3>CPU Usage</h3> <div class="value" id="cpu-val">0%</div> </div>
-        <div class="widget"> <h3>RAM Usage</h3> <div class="value" id="ram-val">0 GB</div> </div>
+        <div class="widget" id="w-cpu"> <h3>CPU Usage</h3> <div class="value" id="cpu-val">0%</div> </div>
+        <div class="widget" id="w-ram"> <h3>RAM Usage</h3> <div class="value" id="ram-val">0 GB</div> </div>
     </div>
 
     <div class="modal-overlay" id="shortcut-modal">
-        <div class="modal">
+        <div class="modal" style="width: 320px; height: auto; padding: 20px;">
             <h2 id="modal-title">Add Shortcut</h2>
             <input type="text" id="shortcut-name-input" placeholder="Name">
-            <input type="text" id="shortcut-url-input" placeholder="URL (e.g. google.com)">
-            <div class="modal-btns">
-                <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+            <input type="text" id="shortcut-url-input" placeholder="URL">
+            <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                <button class="btn" onclick="closeModal('shortcut-modal')" style="background:transparent; color:white;">Cancel</button>
                 <button class="btn btn-primary" onclick="saveShortcutModal()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Customize Zyro</h2>
+                <button class="close-btn" onclick="closeModal('settings-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-sidebar">
+                    <div class="modal-tab active" onclick="switchTab('tab-theme')">Theme</div>
+                    <div class="modal-tab" onclick="switchTab('tab-bg')">Background</div>
+                    <div class="modal-tab" onclick="switchTab('tab-widgets')">Widgets</div>
+                </div>
+                <div class="modal-content-area">
+                    
+                    <div id="tab-theme" class="tab-pane active">
+                        <div class="control-group">
+                            <label>Browser Theme</label>
+                            <select id="pref-theme">
+                                <option value="dark">Dark (Default)</option>
+                                <option value="light">Light</option>
+                                <option value="midnight">Midnight (OLED)</option>
+                                <option value="ocean">Deep Ocean</option>
+                                <option value="sunset">Sunset Purple</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="tab-bg" class="tab-pane">
+                        <div class="control-group">
+                            <label>Background Mode</label>
+                            <select id="pref-bg-type" onchange="toggleBgUpload()">
+                                <option value="default">Use Theme Colors</option>
+                                <option value="custom">Custom Image</option>
+                            </select>
+                        </div>
+                        <div id="bg-upload-area" class="control-group hidden">
+                            <label>Upload Image</label>
+                            <input type="file" id="bg-file-input" accept="image/*" style="display:none" onchange="handleImageUpload(this)">
+                            <div class="file-upload" onclick="document.getElementById('bg-file-input').click()">
+                                Click to select image
+                            </div>
+                            <p style="font-size:12px; opacity:0.6; margin-top:5px;">Image is saved locally.</p>
+                        </div>
+                    </div>
+
+                    <div id="tab-widgets" class="tab-pane">
+                        <div class="toggle-row">
+                            <span>CPU Usage</span>
+                            <label class="switch"><input type="checkbox" id="pref-show-cpu"><span class="slider"></span></label>
+                        </div>
+                        <div class="toggle-row">
+                            <span>RAM Usage</span>
+                            <label class="switch"><input type="checkbox" id="pref-show-ram"><span class="slider"></span></label>
+                        </div>
+                        <div class="toggle-row">
+                            <span>Shortcuts Grid</span>
+                            <label class="switch"><input type="checkbox" id="pref-show-sc"><span class="slider"></span></label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div style="padding: 15px; border-top: 1px solid #444; display: flex; justify-content: flex-end;">
+                 <button class="btn btn-primary" onclick="savePreferences()">Apply Changes</button>
             </div>
         </div>
     </div>
@@ -127,15 +232,104 @@
         const searchBox = document.getElementById('sb');
         let debounceTimer;
 
+        // --- Prefs State ---
+        let currentBgType = 'default';
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+            
+            // Activate
+            document.querySelector(`.modal-tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        function toggleBgUpload() {
+            const val = document.getElementById('pref-bg-type').value;
+            if(val === 'custom') document.getElementById('bg-upload-area').classList.remove('hidden');
+            else document.getElementById('bg-upload-area').classList.add('hidden');
+        }
+
+        function handleImageUpload(input) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    localStorage.setItem('zyro_custom_bg', e.target.result);
+                    // Preview immediately
+                    document.body.style.backgroundImage = `url(${e.target.result})`;
+                    document.querySelector('.file-upload').innerText = "Image Selected";
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        function openSettings() {
+            document.getElementById('settings-modal').style.display = 'flex';
+        }
+
+        function savePreferences() {
+            const theme = document.getElementById('pref-theme').value;
+            const bgType = document.getElementById('pref-bg-type').value;
+            const sCpu = document.getElementById('pref-show-cpu').checked;
+            const sRam = document.getElementById('pref-show-ram').checked;
+            const sSc = document.getElementById('pref-show-sc').checked;
+
+            const msg = {
+                type: 'save_home_prefs',
+                theme: theme,
+                bg_type: bgType,
+                show_cpu: sCpu,
+                show_ram: sRam,
+                show_shortcuts: sSc
+            };
+            
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify(msg));
+            closeModal('settings-modal');
+        }
+        
+        // Called by C++
+        function loadPreferences(prefs) {
+            document.getElementById('pref-theme').value = prefs.theme;
+            setTheme(prefs.theme);
+            
+            document.getElementById('pref-bg-type').value = prefs.bg_type;
+            currentBgType = prefs.bg_type;
+            toggleBgUpload();
+
+            document.getElementById('pref-show-cpu').checked = prefs.show_cpu;
+            document.getElementById('pref-show-ram').checked = prefs.show_ram;
+            document.getElementById('pref-show-sc').checked = prefs.show_shortcuts;
+            
+            applyPreferences(prefs.show_cpu, prefs.show_ram, prefs.show_shortcuts, prefs.bg_type);
+        }
+
+        function applyPreferences(showCpu, showRam, showShortcuts, bgType) {
+            document.getElementById('w-cpu').classList.toggle('hidden', !showCpu);
+            document.getElementById('w-ram').classList.toggle('hidden', !showRam);
+            
+            // If both hidden, hide container to fix margin
+            if (!showCpu && !showRam) document.querySelector('.widgets').classList.add('hidden');
+            else document.querySelector('.widgets').classList.remove('hidden');
+
+            document.getElementById('shortcuts-grid').classList.toggle('hidden', !showShortcuts);
+            
+            if (bgType === 'custom') {
+                const bgData = localStorage.getItem('zyro_custom_bg');
+                if (bgData) {
+                    document.body.style.backgroundImage = `url(${bgData})`;
+                }
+            } else {
+                document.body.style.backgroundImage = 'none';
+            }
+        }
+
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
         // --- Search Logic ---
         function doSearch(query) {
             if(query) window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'search', query: query }));
         }
-
-        searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') doSearch(searchInput.value);
-        });
-
+        searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(searchInput.value); });
         searchInput.addEventListener('input', () => {
             const query = searchInput.value;
             clearTimeout(debounceTimer);
@@ -144,38 +338,26 @@
                 window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_suggestions', query: query }));
             }, 200);
         });
-        
         function renderSuggestions(items) {
             suggestBox.innerHTML = '';
             if (!items || items.length === 0) { hideSuggestions(); return; }
-
             items.forEach(rawItem => {
                 let text = rawItem;
                 let isHistory = false;
                 if (text.startsWith("[H] ")) { isHistory = true; text = text.substring(4); }
-
                 const div = document.createElement('div');
                 div.className = 'suggestion-item';
-                const icon = isHistory 
-                    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>'
-                    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
-
-                div.innerHTML = `${icon}<span>${text}</span>`;
+                div.innerHTML = `<span>${text}</span>`;
                 div.onclick = () => doSearch(text);
                 suggestBox.appendChild(div);
             });
             showSuggestions();
         }
-
         function showSuggestions() { suggestBox.style.display = 'flex'; searchBox.classList.add('open'); }
         function hideSuggestions() { suggestBox.style.display = 'none'; searchBox.classList.remove('open'); }
-
         document.addEventListener('click', (e) => {
             if (!document.querySelector('.search-container').contains(e.target)) hideSuggestions();
-            // Also hide context menu if clicked elsewhere
-            if (document.getElementById('shortcut-menu').style.display === 'block') {
-                 document.getElementById('shortcut-menu').style.display = 'none';
-            }
+            if (document.getElementById('shortcut-menu').style.display === 'block') document.getElementById('shortcut-menu').style.display = 'none';
         });
 
         // --- Stats & Theme ---
@@ -185,7 +367,7 @@
             document.getElementById('ram-val').innerText = ram;
         }
 
-        // --- Shortcut Logic ---
+        // --- Shortcuts Logic ---
         let editingIndex = -1;
         let selectedShortcutIndex = -1;
 
@@ -194,151 +376,74 @@
             const modal = document.getElementById('shortcut-modal');
             const nameIn = document.getElementById('shortcut-name-input');
             const urlIn = document.getElementById('shortcut-url-input');
-            const title = document.getElementById('modal-title');
-            
-            if (index === -1) {
-                title.innerText = "Add Shortcut";
-                nameIn.value = ''; urlIn.value = '';
-            } else {
-                title.innerText = "Edit Shortcut";
-                // We'll fill this better if we passed the data, 
-                // for now the user can just re-type or we use a global list in future.
-            }
+            document.getElementById('modal-title').innerText = (index === -1) ? "Add Shortcut" : "Edit Shortcut";
+            if (index === -1) { nameIn.value = ''; urlIn.value = ''; }
             modal.style.display = 'flex';
             nameIn.focus();
-            
-            // Hide context menu if it was open
-            document.getElementById('shortcut-menu').style.display = 'none';
-        }
-
-        function closeModal() {
-            document.getElementById('shortcut-modal').style.display = 'none';
         }
 
         function saveShortcutModal() {
             const name = document.getElementById('shortcut-name-input').value.trim();
             let url = document.getElementById('shortcut-url-input').value.trim();
-            
-            if (!name || !url) { alert("Please fill in both fields."); return; }
-            if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
-
+            if (!name || !url) return;
+            if (!url.startsWith('http')) url = 'https://' + url;
             const type = editingIndex === -1 ? 'add_shortcut' : 'edit_shortcut';
             const msg = { type: type, name: name, url: url };
             if (editingIndex !== -1) msg.index = editingIndex;
-            
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify(msg));
-            closeModal();
-            
-            // Refresh Grid
-            setTimeout(() => {
-                window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_shortcuts' }));
-            }, 50);
+            closeModal('shortcut-modal');
+            setTimeout(() => window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_shortcuts' })), 50);
         }
 
         function renderShortcuts(list) {
             const grid = document.getElementById('shortcuts-grid');
             grid.innerHTML = ''; 
-            
             list.forEach((s, index) => {
                 const item = document.createElement('div');
                 item.className = 'shortcut-item';
+                item.onclick = () => window.location.href = s.url;
+                item.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, index); };
                 
-                // Left Click: Navigate
-                item.onclick = (e) => {
-                     // Prevent firing if we just closed context menu
-                     if(document.getElementById('shortcut-menu').style.display === 'block') return;
-                     window.location.href = s.url;
-                };
-
-                // Right Click: Menu
-                item.oncontextmenu = (e) => {
-                    e.preventDefault();
-                    e.stopPropagation(); // Stop bubbling
-                    showContextMenu(e.clientX, e.clientY, index);
-                };
-
                 const iconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${new URL(s.url).hostname}`;
                 const circle = document.createElement('div');
                 circle.className = 'icon-circle';
-                
-                const img = document.createElement('img');
-                img.src = iconUrl;
-                img.crossOrigin = "Anonymous";
-                extractColor(img, circle);
-
-                circle.appendChild(img);
+                circle.innerHTML = `<img src="${iconUrl}" crossorigin="anonymous">`;
                 item.appendChild(circle);
-                
-                const nameDiv = document.createElement('div');
-                nameDiv.className = 'shortcut-name';
-                nameDiv.innerText = s.name;
-                item.appendChild(nameDiv);
-
+                item.innerHTML += `<div class="shortcut-name">${s.name}</div>`;
                 grid.appendChild(item);
             });
-
-            // Add Button (Always last)
             const addBtn = document.createElement('div');
             addBtn.className = 'shortcut-item';
             addBtn.onclick = () => openShortcutModal();
-            addBtn.innerHTML = `
-                <div class="icon-circle"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></div>
-                <div class="shortcut-name">Add shortcut</div>
-            `;
+            addBtn.innerHTML = `<div class="icon-circle"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></div><div class="shortcut-name">Add shortcut</div>`;
             grid.appendChild(addBtn);
         }
 
         function showContextMenu(x, y, index) {
             const menu = document.getElementById('shortcut-menu');
             selectedShortcutIndex = index;
-            menu.style.display = 'block';
-            menu.style.left = x + 'px';
-            menu.style.top = y + 'px';
+            menu.style.display = 'block'; menu.style.left = x + 'px'; menu.style.top = y + 'px';
         }
-
-        function extractColor(imgElement, circleElement) {
-            imgElement.onload = function() {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                canvas.width = 1; canvas.height = 1;
-                ctx.drawImage(imgElement, 0, 0, 1, 1);
-                const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-                circleElement.style.backgroundColor = `rgba(${r}, ${g}, ${b}, 0.2)`;
-                circleElement.style.border = `1px solid rgba(${r}, ${g}, ${b}, 0.4)`;
-            };
-            if (imgElement.complete) imgElement.onload();
-        }
-
-        // --- Context Menu Actions ---
         document.getElementById('menu-delete').onclick = () => {
-            if (confirm("Delete this shortcut?")) {
-                window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({
-                    type: 'delete_shortcut', index: selectedShortcutIndex
-                }));
-                document.getElementById('shortcut-menu').style.display = 'none';
-                setTimeout(() => window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_shortcuts' })), 50);
-            }
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'delete_shortcut', index: selectedShortcutIndex }));
+            document.getElementById('shortcut-menu').style.display = 'none';
+            setTimeout(() => window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_shortcuts' })), 50);
         };
-
-        document.getElementById('menu-edit').onclick = () => {
-             openShortcutModal(selectedShortcutIndex);
-        };
+        document.getElementById('menu-edit').onclick = () => openShortcutModal(selectedShortcutIndex);
 
         function setIncognitoMode(isIncognito) {
             if (isIncognito) {
                 document.getElementById('incognito-badge').style.display = 'flex';
-                // Optional: Hide widgets or shortcuts grid if you want a cleaner look
                 document.getElementById('shortcuts-grid').style.display = 'none';
                 document.querySelector('.widgets').style.display = 'none';
+                document.querySelector('.settings-cog').style.display = 'none';
             }
         }
 
         window.onload = () => {
-            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_theme' }));
-            
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_incognito_status' }));
-            
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_shortcuts' }));
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_home_prefs' }));
         }
     </script>
 </body>

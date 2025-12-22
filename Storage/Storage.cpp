@@ -35,9 +35,17 @@ void save_shortcuts_to_disk() {
 void save_settings(const std::string& engine, const std::string& theme) {
     settings.search_engine = engine;
     settings.theme = theme;
+    
     GKeyFile* key_file = g_key_file_new();
+    
     g_key_file_set_string(key_file, "General", "search_engine", settings.search_engine.c_str());
     g_key_file_set_string(key_file, "General", "theme", settings.theme.c_str());
+    
+    g_key_file_set_boolean(key_file, "Home", "show_cpu", settings.show_cpu);
+    g_key_file_set_boolean(key_file, "Home", "show_ram", settings.show_ram);
+    g_key_file_set_boolean(key_file, "Home", "show_shortcuts", settings.show_shortcuts);
+    g_key_file_set_string(key_file, "Home", "bg_type", settings.bg_type.c_str());
+
     g_key_file_save_to_file(key_file, (get_user_data_dir() + "settings.ini").c_str(), NULL);
     g_key_file_free(key_file);
 }
@@ -71,10 +79,25 @@ void load_data() {
     if (g_key_file_load_from_file(key_file, (conf_dir + "settings.ini").c_str(), G_KEY_FILE_NONE, NULL)) {
         gchar* engine = g_key_file_get_string(key_file, "General", "search_engine", NULL);
         if (engine) { settings.search_engine = engine; g_free(engine); }
+        
         gchar* theme = g_key_file_get_string(key_file, "General", "theme", NULL);
         if (theme) { settings.theme = theme; g_free(theme); }
+
+        if (g_key_file_has_key(key_file, "Home", "show_cpu", NULL))
+            settings.show_cpu = g_key_file_get_boolean(key_file, "Home", "show_cpu", NULL);
+        
+        if (g_key_file_has_key(key_file, "Home", "show_ram", NULL))
+            settings.show_ram = g_key_file_get_boolean(key_file, "Home", "show_ram", NULL);
+            
+        if (g_key_file_has_key(key_file, "Home", "show_shortcuts", NULL))
+            settings.show_shortcuts = g_key_file_get_boolean(key_file, "Home", "show_shortcuts", NULL);
+
+        gchar* bg = g_key_file_get_string(key_file, "Home", "bg_type", NULL);
+        if (bg) { settings.bg_type = bg; g_free(bg); }
     }
     g_key_file_free(key_file);
+    
+    apply_browser_theme(settings.theme);
 
     std::ifstream s_file(conf_dir + "searches.txt");
     std::string line;

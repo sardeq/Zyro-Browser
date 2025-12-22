@@ -30,7 +30,9 @@ static GtkWidget* on_web_view_create(WebKitWebView* web_view, WebKitNavigationAc
 extern int get_blocked_count();
 
 void run_js(WebKitWebView* view, const std::string& script) {
-    webkit_web_view_evaluate_javascript(view, script.c_str(), -1, NULL, NULL, NULL, NULL, NULL);
+    if (WEBKIT_IS_WEB_VIEW(view)) {
+        webkit_web_view_evaluate_javascript(view, script.c_str(), -1, NULL, NULL, NULL, NULL, NULL);
+    }
 }
 
 GtkNotebook* get_notebook(GtkWidget* win) {
@@ -220,6 +222,15 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         if (std::regex_search(json, match, re)) return match[1].str();
         return "";
     };
+    
+    auto get_json_bool = [&](std::string key) -> bool {
+         std::regex re("\"" + key + "\"\\s*:\\s*(true|false)");
+         std::smatch match;
+         if (std::regex_search(json, match, re)) {
+             return match[1].str() == "true";
+         }
+         return false;
+    };
 
     auto get_json_int = [&](std::string key) -> int {
         std::regex re("\"" + key + "\"\\s*:\\s*([0-9]+)");
@@ -247,21 +258,87 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         std::string theme = get_json_val("theme");
         if (engine.empty()) engine = settings.search_engine;
         if (theme.empty()) theme = settings.theme;
-        save_settings(engine, theme);
         
+        save_settings(engine, theme);
+        apply_browser_theme(theme); // Update GTK
+        
+        // Notify all tabs about theme change (FIXED LOOP)
         if(global_window) {
              GtkNotebook* nb = get_notebook(global_window);
              int pages = gtk_notebook_get_n_pages(nb);
              for(int i=0; i<pages; i++) {
                  GtkWidget* page_box = gtk_notebook_get_nth_page(nb, i);
                  GList* children = gtk_container_get_children(GTK_CONTAINER(page_box));
-                 if(children && children->next) {
-                    WebKitWebView* v = WEBKIT_WEB_VIEW(children->next->data);
-                    run_js(v, "setTheme('" + theme + "');");
+                 for(GList* l = children; l; l = l->next) {
+                     if(WEBKIT_IS_WEB_VIEW(l->data)) {
+                        run_js(WEBKIT_WEB_VIEW(l->data), "setTheme('" + theme + "');");
+                        break;
+                     }
                  }
                  g_list_free(children);
              }
         }
+    }
+    else if (type == "save_home_prefs") {
+        // Save Home Page Specific Customizations
+        settings.bg_type = get_json_val("bg_type");
+        settings.show_cpu = get_json_bool("show_cpu");
+        settings.show_ram = get_json_bool("show_ram");
+        settings.show_shortcuts = get_json_bool("show_shortcuts");
+        
+        std::string theme = get_json_val("theme");
+        if (!theme.empty()) {
+            settings.theme = theme;
+            apply_browser_theme(theme);
+        }
+
+        save_settings(settings.search_engine, settings.theme);
+        
+        // Refresh tabs with new theme (FIXED LOOP)
+        if(global_window) {
+             GtkNotebook* nb = get_notebook(global_window);
+             int pages = gtk_notebook_get_n_pages(nb);
+             for(int i=0; i<pages; i++) {
+                 GtkWidget* page_box = gtk_notebook_get_nth_page(nb, i);
+                 GList* children = gtk_container_get_children(GTK_CONTAINER(page_box));
+                 for(GList* l = children; l; l = l->next) {
+                     if(WEBKIT_IS_WEB_VIEW(l->data)) {
+                        WebKitWebView* v = WEBKIT_WEB_VIEW(l->data);
+                        // Update theme
+                        run_js(v, "setTheme('" + settings.theme + "');");
+                        
+                        // Update Home prefs if applicable
+                        const char* uri = webkit_web_view_get_uri(v);
+                        if (uri && std::string(uri).find("home.html") != std::string::npos) {
+                            std::string bool_cpu = settings.show_cpu ? "true" : "false";
+                            std::string bool_ram = settings.show_ram ? "true" : "false";
+                            std::string bool_sc = settings.show_shortcuts ? "true" : "false";
+                            
+                            std::string script = "applyPreferences(" + bool_cpu + ", " + bool_ram + ", " + bool_sc + ", '" + settings.bg_type + "');";
+                            run_js(v, script);
+                        }
+                        break; 
+                     }
+                 }
+                 g_list_free(children);
+             }
+        }
+    }
+    else if (type == "get_home_prefs") {
+        std::string bool_cpu = settings.show_cpu ? "true" : "false";
+        std::string bool_ram = settings.show_ram ? "true" : "false";
+        std::string bool_sc = settings.show_shortcuts ? "true" : "false";
+        
+        std::stringstream ss;
+        ss << "{";
+        ss << "\"show_cpu\": " << bool_cpu << ",";
+        ss << "\"show_ram\": " << bool_ram << ",";
+        ss << "\"show_shortcuts\": " << bool_sc << ",";
+        ss << "\"bg_type\": \"" << settings.bg_type << "\",";
+        ss << "\"theme\": \"" << settings.theme << "\"";
+        ss << "}";
+        
+        run_js(view, "loadPreferences(" + ss.str() + ");");
     }
     else if (type == "get_bookmarks") {
         if (is_incognito) {
@@ -997,49 +1074,16 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     g_object_set_data(G_OBJECT(b_blocker), "type", (gpointer)"blocker_btn"); // For updates
     create_blocker_popover(b_blocker);
 
-    gtk_box_pack_start(GTK_BOX(pop_box), pop_header, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(pop_box), list_box, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(pop_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
-    gtk_box_pack_start(GTK_BOX(pop_box), full_page_link, FALSE, FALSE, 0);
-    
-    gtk_container_add(GTK_CONTAINER(dl_popover), pop_box);
-    gtk_widget_show_all(pop_box);
-
-    g_signal_connect(b_downloads, "toggled", G_CALLBACK(+[](GtkToggleButton* btn, gpointer pop){
-        if (gtk_toggle_button_get_active(btn)) {
-            update_downloads_popup(); 
-            gtk_popover_popup(GTK_POPOVER(pop));
-        } else {
-            gtk_popover_popdown(GTK_POPOVER(pop));
-        }
-    }), dl_popover);
-    
-    g_signal_connect(dl_popover, "closed", G_CALLBACK(+[](GtkPopover*, gpointer btn){
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), FALSE);
-    }), b_downloads);
-
-    global_downloads_btn = b_downloads;
-    global_downloads_popover = dl_popover;
-    global_downloads_list_box = list_box;
-
-    g_signal_connect(dl_popover, "destroy", G_CALLBACK(+[](GtkWidget* widget, gpointer){
-        if (global_downloads_popover == widget) {
-            global_downloads_popover = nullptr;
-            global_downloads_list_box = nullptr;
-            global_downloads_btn = nullptr;
-        }
-    }), NULL);
-
+    // --- Create URL Entry and Completion ---
     GtkWidget* url_entry = gtk_entry_new();
     GtkEntryCompletion* completion = gtk_entry_completion_new();
-    GtkListStore* store = gtk_list_store_new(1, G_TYPE_STRING);
-    gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(store));
+    GtkListStore* completion_model = gtk_list_store_new(1, G_TYPE_STRING);
+    gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(completion_model));
     gtk_entry_completion_set_text_column(completion, 0);
-    gtk_entry_completion_set_inline_completion(completion, TRUE);
-    gtk_entry_completion_set_popup_completion(completion, TRUE);
-    gtk_entry_completion_set_inline_selection(completion, TRUE);
+    g_object_unref(completion_model);
     gtk_entry_set_completion(GTK_ENTRY(url_entry), completion);
-    gtk_entry_completion_set_minimum_key_length(completion, 1);
+    gtk_entry_completion_set_minimum_key_length(completion, 2);
+    // ---------------------------------------
 
     gtk_box_pack_start(GTK_BOX(toolbar), b_back, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_fwd, FALSE, FALSE, 0);

@@ -196,3 +196,89 @@ std::string get_process_name(int pid) {
     return name;
 #endif
 }
+
+void apply_browser_theme(const std::string& theme_name) {
+    std::string css_data;
+    
+    if (theme_name == "light") {
+        css_data = 
+            "window { background-color: #f1f3f4; }"
+            "notebook header { background-color: #ffffff; }"
+            "notebook tab { background-color: #ffffff; color: #5f6368; }"
+            "notebook tab:hover { background-color: #f1f3f4; }"
+            "notebook tab:checked { background-color: #e8f0fe; color: #1967d2; }"
+            "box.toolbar { background-color: #ffffff; border-bottom: 1px solid #dadce0; }"
+            "entry { background-color: #f1f3f4; color: #202124; border: 1px solid transparent; }"
+            "entry:focus { background-color: #ffffff; border: 1px solid #1967d2; }"
+            "button { color: #5f6368; }"
+            "button:hover { background-color: #f1f3f4; color: #202124; }";
+    } 
+    else if (theme_name == "midnight") {
+        css_data = 
+            "window { background-color: #000000; }"
+            "notebook header { background-color: #111111; }"
+            "notebook tab { background-color: #111111; color: #888888; }"
+            "notebook tab:hover { background-color: #222222; }"
+            "notebook tab:checked { background-color: #333333; color: #00ffcc; }"
+            "box.toolbar { background-color: #111111; border-bottom: 1px solid #222; }"
+            "entry { background-color: #222222; color: #ffffff; }"
+            "entry:focus { border: 1px solid #00ffcc; }"
+            "button { color: #888888; }"
+            "button:hover { background-color: #333333; color: #00ffcc; }";
+    }
+    else if (theme_name == "ocean") {
+        css_data = 
+            "window { background-color: #0f1c2e; }"
+            "notebook header { background-color: #162438; }"
+            "notebook tab { background-color: #162438; color: #8faecf; }"
+            "notebook tab:hover { background-color: #1f304a; }"
+            "notebook tab:checked { background-color: #1f304a; color: #64ffda; }"
+            "box.toolbar { background-color: #162438; border-bottom: 1px solid #0f1c2e; }"
+            "entry { background-color: #1f304a; color: #ccd6f6; }"
+            "entry:focus { border: 1px solid #64ffda; }"
+            "button { color: #8faecf; }"
+            "button:hover { background-color: #1f304a; color: #64ffda; }";
+    }
+    else if (theme_name == "sunset") {
+        css_data = 
+            "window { background-color: #2d1b2e; }"
+            "notebook header { background-color: #45283c; }"
+            "notebook tab { background-color: #45283c; color: #dcb3bc; }"
+            "notebook tab:hover { background-color: #58344c; }"
+            "notebook tab:checked { background-color: #58344c; color: #ff9e64; }"
+            "box.toolbar { background-color: #45283c; border-bottom: 1px solid #2d1b2e; }"
+            "entry { background-color: #2d1b2e; color: #fff; }"
+            "entry:focus { border: 1px solid #ff9e64; }"
+            "button { color: #dcb3bc; }"
+            "button:hover { background-color: #58344c; color: #ff9e64; }";
+    }
+    else {
+        css_data = 
+            "window { background-color: #1a1b1e; }"
+            "notebook header { background-color: #202124; }"
+            "notebook tab { background-color: #202124; color: #9aa0a6; }"
+            "notebook tab:hover { background-color: #292a2d; }"
+            "notebook tab:checked { background-color: #323639; color: #e8eaed; }"
+            "box.toolbar { background-color: #202124; border-bottom: 1px solid #1a1b1e; }"
+            "entry { background-color: #303134; color: #e8eaed; }"
+            "entry:focus { border: 1px solid #8ab4f8; }"
+            "button { color: #9aa0a6; }"
+            "button:hover { background-color: #3c4043; color: #e8eaed; }";
+    }
+
+    std::string style_path = get_assets_path() + "style.css";
+    GtkCssProvider* provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_path(provider, style_path.c_str(), NULL);
+    
+    GtkCssProvider* color_provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(color_provider, css_data.c_str(), -1, NULL);
+
+    GdkScreen* screen = gdk_screen_get_default();
+    gtk_style_context_remove_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider));
+    
+    gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(color_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+
+    g_object_unref(provider);
+    g_object_unref(color_provider);
+}
