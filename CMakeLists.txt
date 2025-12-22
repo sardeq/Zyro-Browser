@@ -5,7 +5,6 @@ find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 
-# CHANGED: Target 4.1 (Supports PID) and Soup 3.0 (Required by 4.1)
 pkg_check_modules(WEBKIT REQUIRED webkit2gtk-4.1)
 pkg_check_modules(SOUP REQUIRED libsoup-3.0)
 
@@ -33,6 +32,16 @@ if(UNIX AND NOT APPLE)
 endif()
 
 link_directories(${GTK3_LIBRARY_DIRS} ${WEBKIT_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS} ${OPENSSL_LIBRARY_DIRS})
+
+add_library(ZyroWebExtension SHARED Extensions/Extension.cpp)
+
+target_include_directories(ZyroWebExtension PRIVATE ${WEBKIT_INCLUDE_DIRS})
+target_link_directories(ZyroWebExtension PRIVATE ${WEBKIT_LIBRARY_DIRS})
+target_link_libraries(ZyroWebExtension ${WEBKIT_LIBRARIES})
+
+set_target_properties(ZyroWebExtension PROPERTIES 
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
 
 add_executable(ZyroBrowser 
     main.cpp 

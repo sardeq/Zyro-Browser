@@ -404,17 +404,6 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         else if (type == "get_tasks") {
         GtkNotebook* nb = get_notebook(global_window);
         int n_pages = gtk_notebook_get_n_pages(nb);
-        
-        std::vector<int> all_children = get_child_pids();
-        std::vector<int> web_pids;
-        
-        for (int pid : all_children) {
-            std::string name = get_process_name(pid);
-            if (name.find("Web") != std::string::npos && name.find("Network") == std::string::npos) {
-                web_pids.push_back(pid);
-            }
-        }
-        std::sort(web_pids.begin(), web_pids.end());
 
         std::stringstream ss; 
         ss << "[";
@@ -423,6 +412,8 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
             GtkWidget* page = gtk_notebook_get_nth_page(nb, i);
             GList* children = gtk_container_get_children(GTK_CONTAINER(page));
             WebKitWebView* tab_view = nullptr;
+            
+            // Find the WebKitWebView inside the page container
             for(GList* l = children; l; l = l->next) {
                 if(WEBKIT_IS_WEB_VIEW(l->data)) { 
                     tab_view = WEBKIT_WEB_VIEW(l->data); 
@@ -435,11 +426,14 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
                 const char* title = webkit_web_view_get_title(tab_view);
                 const char* url = webkit_web_view_get_uri(tab_view);
                 
-                guint pid = 0;
+                // CHANGED: Get the PID directly from the object data
+                // This data is set by the 'pid-update' message handler we added earlier
+                int pid = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(tab_view), "web_pid"));
+                
                 std::string mem = "-";
                 
-                if (i < web_pids.size()) {
-                    pid = web_pids[i];
+                // Only calculate memory if we have a valid PID from the extension
+                if (pid > 0) {
                     long kb = get_pid_rss_kb(pid);
                     std::stringstream mss;
                     mss << std::fixed << std::setprecision(1) << (kb / 1024.0) << " MB";
@@ -579,6 +573,24 @@ void refresh_bookmarks_bar(GtkWidget* bar) {
         gtk_box_pack_start(GTK_BOX(bar), btn, FALSE, FALSE, 2);
     }
     gtk_widget_show_all(bar);
+}
+
+static gboolean on_user_message_received(WebKitWebView* view, WebKitUserMessage* message, gpointer user_data) {
+    const char* name = webkit_user_message_get_name(message);
+    
+    if (strcmp(name, "pid-update") == 0) {
+        GVariant* params = webkit_user_message_get_parameters(message);
+        if (params) {
+            const char* pid_str = g_variant_get_string(params, NULL);
+            int pid = std::stoi(pid_str);
+            
+            g_object_set_data(G_OBJECT(view), "web_pid", GINT_TO_POINTER(pid));
+            
+            std::cout << "Tab matched to PID: " << pid << std::endl;
+        }
+        return TRUE;
+    }
+    return FALSE;
 }
 
 
@@ -903,6 +915,8 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     } else {
         view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
     }
+
+    g_signal_connect(view, "user-message-received", G_CALLBACK(on_user_message_received), NULL);
 
     g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
 

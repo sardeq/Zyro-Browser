@@ -4,6 +4,8 @@
 #include <gtk/gtk.h>
 #include "Globals.h"
 
+std::string get_self_path();
+
 std::string get_user_data_dir();
 std::string get_assets_path();
 std::string get_current_time_str();

@@ -53,7 +53,13 @@ int main(int argc, char** argv) {
         "base-data-directory", data.c_str(), 
         NULL
     );
+
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
+
+    std::string extension_dir = get_self_path() + "/lib";
+    webkit_web_context_set_web_extensions_directory(global_context, extension_dir.c_str());
+
+    
     //temp
     webkit_web_context_set_cache_model(
         global_context, 
