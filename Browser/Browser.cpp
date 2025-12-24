@@ -1021,6 +1021,9 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
         view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context, "user-content-manager", ucm, NULL));
     }
 
+    WebKitSettings *wk_settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(view));
+    webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
+
     g_signal_connect(view, "user-message-received", G_CALLBACK(on_user_message_received), NULL);
 
     g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
@@ -1437,6 +1440,15 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
         webkit_web_view_reload(view);
         return TRUE;
     }
+
+    if (event->keyval == GDK_KEY_F12 && view) {
+        WebKitWebInspector *inspector = webkit_web_view_get_inspector(view);
+        webkit_web_inspector_show(inspector);
+        return TRUE;
+    }
+
+    return FALSE; 
+
 
     return FALSE; 
 }
