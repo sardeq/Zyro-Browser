@@ -112,6 +112,12 @@
         /* Custom Inputs */
         select, input[type="text"] { width: 100%; padding: 8px; background: #303134; border: 1px solid #555; border-radius: 4px; color: white; margin-bottom: 10px; box-sizing: border-box; }
         
+        /* Fix for unreadable dropdown options */
+        select option {
+            background-color: #303134;
+            color: white;
+        }
+
         .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #333; }
         .toggle-row:last-child { border-bottom: none; }
         
@@ -160,7 +166,7 @@
 
     <div class="widgets">
         <div class="widget" id="w-cpu"> <h3>CPU Usage</h3> <div class="value" id="cpu-val">0%</div> </div>
-        <div class="widget" id="w-ram"> <h3>RAM Usage</h3> <div class="value" id="ram-val">0 GB</div> </div>
+        <div class="widget" id="w-ram"> <h3>Memory Usage</h3> <div class="value" id="ram-val">0 GB</div> </div>
     </div>
 
     <div class="modal-overlay" id="shortcut-modal">

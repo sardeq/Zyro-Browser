@@ -719,7 +719,7 @@ static gboolean on_user_message_received(WebKitWebView* view, WebKitUserMessage*
             
             g_object_set_data(G_OBJECT(view), "web_pid", GINT_TO_POINTER(pid));
             
-            std::cout << "Tab matched to PID: " << pid << std::endl;
+            //std::cout << "Tab matched to PID: " << pid << std::endl; // debugging
         }
         return TRUE;
     }

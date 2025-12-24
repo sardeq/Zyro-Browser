@@ -1,18 +1,28 @@
 #include "Utils.h"
+#include "Globals.h" 
 #include <iostream>
 #include <ctime>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <map>
+#include <set>
+#include <numeric>
+#include <vector>
+#include <algorithm>
 
 #ifdef _WIN32
     #include <windows.h>
-    #include <sys/types.h>
+    #include <psapi.h>
 #else
     #include <unistd.h>
     #include <sys/sysinfo.h>
     #include <dirent.h>
+    #include <sys/resource.h>
 #endif
+
+static std::map<int, unsigned long long> last_proc_times;
+static unsigned long long last_sys_time = 0;
 
 std::string get_self_path() {
 #ifdef _WIN32
@@ -33,6 +43,28 @@ std::string get_self_path() {
 }
 
 #ifndef _WIN32
+unsigned long long get_proc_total_time(int pid) {
+    std::string path = "/proc/" + std::to_string(pid) + "/stat";
+    std::ifstream f(path);
+    if (!f.is_open()) return 0;
+    
+    std::string line;
+    std::getline(f, line);
+    
+    size_t last_paren = line.find_last_of(')');
+    if (last_paren == std::string::npos || last_paren + 2 >= line.length()) return 0;
+
+    std::stringstream ss(line.substr(last_paren + 2));
+    
+    std::string ignore;
+    unsigned long long utime = 0, stime = 0;
+    
+    for(int i=0; i<11; i++) ss >> ignore;
+    
+    ss >> utime >> stime;
+    return utime + stime;
+}
+
 long get_pid_rss_kb(int pid) {
     std::string path = "/proc/" + std::to_string(pid) + "/statm";
     std::ifstream f(path);
@@ -42,61 +74,72 @@ long get_pid_rss_kb(int pid) {
     return rss * (sysconf(_SC_PAGESIZE) / 1024); 
 }
 
-std::vector<int> get_child_pids() {
-    std::vector<int> children;
-    int my_pid = getpid();
-    
+void collect_descendants(int pid, std::set<int>& pids) {
     DIR* proc = opendir("/proc");
-    if (!proc) return children;
+    if (!proc) return;
 
     struct dirent* entry;
     while ((entry = readdir(proc)) != NULL) {
         if (entry->d_type == DT_DIR && isdigit(entry->d_name[0])) {
-            int pid = std::stoi(entry->d_name);
-            if (pid == my_pid) continue; // Skip self
+            int current_pid = std::stoi(entry->d_name);
+            if (pids.find(current_pid) != pids.end()) continue;
 
             std::string stat_path = "/proc/" + std::string(entry->d_name) + "/stat";
             std::ifstream f(stat_path);
             if (f.is_open()) {
-                std::string dummy;
-                int ppid;
                 std::string line;
                 std::getline(f, line);
                 size_t last_paren = line.find_last_of(')');
                 if (last_paren != std::string::npos && last_paren + 2 < line.length()) {
                     std::stringstream ss(line.substr(last_paren + 2));
                     char state;
+                    int ppid;
                     ss >> state >> ppid;
                     
-                    if (ppid == my_pid) {
-                        children.push_back(pid);
+                    if (ppid == pid) {
+                        pids.insert(current_pid);
+                        collect_descendants(current_pid, pids);
                     }
                 }
             }
         }
     }
     closedir(proc);
-    return children;
+}
+
+std::vector<int> get_child_pids() {
+    std::set<int> pids;
+    collect_descendants(getpid(), pids);
+    return std::vector<int>(pids.begin(), pids.end());
 }
 #endif
 
-//idk man
 std::string get_total_memory_str() {
-    double total_mb = 0;
-
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-        total_mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
+        double total_mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
+        std::stringstream ss;
+        ss << std::fixed << std::setprecision(1) << total_mb << " MB"; 
+        return ss.str();
     }
+    return "0 MB";
 #else
-    long rss_kb = get_pid_rss_kb(getpid());
-    total_mb = rss_kb / 1024.0; 
-#endif
+    long total_rss_kb = 0;
+    
+    total_rss_kb += get_pid_rss_kb(getpid());
+    
+    std::vector<int> children = get_child_pids();
+    for (int pid : children) {
+        total_rss_kb += get_pid_rss_kb(pid);
+    }
 
+    double total_mb = total_rss_kb / 1024.0;
+    
     std::stringstream ss;
-    ss << std::fixed << std::setprecision(1) << total_mb << " MB (Main)"; 
+    ss << std::fixed << std::setprecision(1) << total_mb << " MB"; 
     return ss.str();
+#endif
 }
 
 std::string get_assets_path() {
@@ -156,30 +199,56 @@ void get_sys_stats(int& cpu_usage, std::string& ram_usage) {
     ram_usage = get_total_memory_str();
 
 #ifdef _WIN32
-    cpu_usage = 0; 
+    cpu_usage = 0;
 #else
-    static unsigned long long lastTotalUser, lastTotalUserLow, lastTotalSys, lastTotalIdle;
-    unsigned long long totalUser, totalUserLow, totalSys, totalIdle, total;
     std::ifstream file("/proc/stat");
     std::string line;
     std::getline(file, line);
-    std::sscanf(line.c_str(), "cpu %llu %llu %llu %llu", &totalUser, &totalUserLow, &totalSys, &totalIdle);
+    
+    unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
+    std::sscanf(line.c_str(), "cpu %llu %llu %llu %llu %llu %llu %llu %llu", 
+        &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal);
+        
+    unsigned long long total_sys_time = user + nice + system + idle + iowait + irq + softirq + steal;
 
-    if (totalUser < lastTotalUser || totalIdle < lastTotalIdle) {
-        cpu_usage = 0;
-    } else {
-        total = (totalUser - lastTotalUser) + (totalUserLow - lastTotalUserLow) + (totalSys - lastTotalSys);
-        unsigned long long percent = total;
-        total += (totalIdle - lastTotalIdle);
-        cpu_usage = (total > 0) ? (int)((percent * 100) / total) : 0;
+    std::vector<int> pids = get_child_pids();
+    pids.push_back(getpid());
+    
+    unsigned long long total_proc_time = 0;
+    std::map<int, unsigned long long> current_proc_times;
+    
+    unsigned long long proc_delta_sum = 0;
+
+    for (int pid : pids) {
+        unsigned long long t = get_proc_total_time(pid);
+        if (t == 0) continue;
+        
+        current_proc_times[pid] = t;
+        
+        if (last_proc_times.count(pid)) {
+            if (t >= last_proc_times[pid]) {
+                proc_delta_sum += (t - last_proc_times[pid]);
+            }
+        }
     }
-    lastTotalUser = totalUser; lastTotalUserLow = totalUserLow; lastTotalSys = totalSys; lastTotalIdle = totalIdle;
+    
+    if (last_sys_time > 0 && total_sys_time > last_sys_time) {
+        unsigned long long sys_delta = total_sys_time - last_sys_time;
+        
+        if (sys_delta > 0) {
+            double pct = (double)proc_delta_sum / (double)sys_delta * 100.0;
+            cpu_usage = (int)pct; 
+        }
+    }
+
+    last_sys_time = total_sys_time;
+    last_proc_times = current_proc_times;
 #endif
 }
 
 std::string get_process_name(int pid) {
 #ifdef _WIN32
-    return ""; // Windows later
+    return ""; 
 #else
     std::string path = "/proc/" + std::to_string(pid) + "/comm";
     std::ifstream f(path);
@@ -193,91 +262,9 @@ std::string get_process_name(int pid) {
 }
 
 void apply_browser_theme(const std::string& theme_name) {
-    GtkSettings* gtk_settings = gtk_settings_get_default();
-    gboolean use_dark = (theme_name != "light"); 
-    g_object_set(gtk_settings, "gtk-application-prefer-dark-theme", use_dark, NULL);
-
-    std::string css_data;
-    
-    if (theme_name == "light") {
-        css_data = 
-            "window { background-color: #f1f3f4; }"
-            "notebook header { background-color: #ffffff; }"
-            "notebook tab { background-color: #ffffff; color: #5f6368; }"
-            "notebook tab:hover { background-color: #f1f3f4; }"
-            "notebook tab:checked { background-color: #e8f0fe; color: #1967d2; }"
-            "box.toolbar { background-color: #ffffff; border-bottom: 1px solid #dadce0; }"
-            "entry { background-color: #f1f3f4; color: #202124; border: 1px solid transparent; }"
-            "entry:focus { background-color: #ffffff; border: 1px solid #1967d2; }"
-            "button { color: #5f6368; }"
-            "button:hover { background-color: #f1f3f4; color: #202124; }";
-    } 
-    else if (theme_name == "midnight") {
-        css_data = 
-            "window { background-color: #000000; }"
-            "notebook header { background-color: #111111; }"
-            "notebook tab { background-color: #111111; color: #888888; }"
-            "notebook tab:hover { background-color: #222222; }"
-            "notebook tab:checked { background-color: #333333; color: #00ffcc; }"
-            "box.toolbar { background-color: #111111; border-bottom: 1px solid #222; }"
-            "entry { background-color: #222222; color: #ffffff; }"
-            "entry:focus { border: 1px solid #00ffcc; }"
-            "button { color: #888888; }"
-            "button:hover { background-color: #333333; color: #00ffcc; }";
+    GtkSettings* settings = gtk_settings_get_default();
+    if (settings) {
+        gboolean prefer_dark = (theme_name != "light"); 
+        g_object_set(settings, "gtk-application-prefer-dark-theme", prefer_dark, NULL);
     }
-    else if (theme_name == "ocean") {
-        css_data = 
-            "window { background-color: #0f1c2e; }"
-            "notebook header { background-color: #162438; }"
-            "notebook tab { background-color: #162438; color: #8faecf; }"
-            "notebook tab:hover { background-color: #1f304a; }"
-            "notebook tab:checked { background-color: #1f304a; color: #64ffda; }"
-            "box.toolbar { background-color: #162438; border-bottom: 1px solid #0f1c2e; }"
-            "entry { background-color: #1f304a; color: #ccd6f6; }"
-            "entry:focus { border: 1px solid #64ffda; }"
-            "button { color: #8faecf; }"
-            "button:hover { background-color: #1f304a; color: #64ffda; }";
-    }
-    else if (theme_name == "sunset") {
-        css_data = 
-            "window { background-color: #2d1b2e; }"
-            "notebook header { background-color: #45283c; }"
-            "notebook tab { background-color: #45283c; color: #dcb3bc; }"
-            "notebook tab:hover { background-color: #58344c; }"
-            "notebook tab:checked { background-color: #58344c; color: #ff9e64; }"
-            "box.toolbar { background-color: #45283c; border-bottom: 1px solid #2d1b2e; }"
-            "entry { background-color: #2d1b2e; color: #fff; }"
-            "entry:focus { border: 1px solid #ff9e64; }"
-            "button { color: #dcb3bc; }"
-            "button:hover { background-color: #58344c; color: #ff9e64; }";
-    }
-    else {
-        css_data = 
-            "window { background-color: #1a1b1e; }"
-            "notebook header { background-color: #202124; }"
-            "notebook tab { background-color: #202124; color: #9aa0a6; }"
-            "notebook tab:hover { background-color: #292a2d; }"
-            "notebook tab:checked { background-color: #323639; color: #e8eaed; }"
-            "box.toolbar { background-color: #202124; border-bottom: 1px solid #1a1b1e; }"
-            "entry { background-color: #303134; color: #e8eaed; }"
-            "entry:focus { border: 1px solid #8ab4f8; }"
-            "button { color: #9aa0a6; }"
-            "button:hover { background-color: #3c4043; color: #e8eaed; }";
-    }
-
-    std::string style_path = get_assets_path() + "style.css";
-    GtkCssProvider* provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_path(provider, style_path.c_str(), NULL);
-    
-    GtkCssProvider* color_provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_data(color_provider, css_data.c_str(), -1, NULL);
-
-    GdkScreen* screen = gdk_screen_get_default();
-    gtk_style_context_remove_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider));
-    
-    gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(color_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
-
-    g_object_unref(provider);
-    g_object_unref(color_provider);
 }
