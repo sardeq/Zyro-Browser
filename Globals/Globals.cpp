@@ -21,3 +21,6 @@ GtkWidget* global_downloads_btn = nullptr;
 
 bool global_blocker_enabled = true; // Default to ON
 WebKitUserContentFilter* global_filter = nullptr;
+
+GtkWidget* global_media_popover = nullptr;
+GtkWidget* global_media_list_box = nullptr;

@@ -19,6 +19,13 @@ static gboolean memory_trim_timer(gpointer) {
     return TRUE; 
 }
 
+static gboolean refresh_media_popup_timer(gpointer) {
+    if (global_media_popover && gtk_widget_get_visible(global_media_popover)) {
+        update_media_popup();
+    }
+    return TRUE; 
+}
+
 static gboolean refresh_download_popup_timer(gpointer) {
     if (global_downloads_popover && gtk_widget_get_visible(global_downloads_popover)) {
         update_downloads_popup();
@@ -102,6 +109,8 @@ int main(int argc, char** argv) {
     g_timeout_add(500, refresh_download_popup_timer, NULL);
     g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
     g_timeout_add(3000, update_home_stats, NULL);
+
+    g_timeout_add(1000, refresh_media_popup_timer, NULL);
 
     if (settings.enable_memory_trim) {
         g_timeout_add_seconds(15, memory_trim_timer, NULL);

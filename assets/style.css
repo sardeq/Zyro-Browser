@@ -283,3 +283,82 @@ window.incognito box.toolbar button:hover {
 window.incognito entry image.primary {
     color: #a142f4;
 }
+
+.media-empty-state, .download-empty-state {
+    padding: 40px 20px;
+    text-align: center;
+    color: #9aa0a6;
+}
+
+.media-empty-state image, .download-empty-state image {
+    margin-bottom: 12px;
+    opacity: 0.3;
+}
+
+popover.background {
+    background-color: #292a2d;
+    border: 1px solid #444;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+#media-popover-content {
+    min-width: 280px;
+    min-height: 120px;
+}
+
+.media-row {
+    background-color: #303134;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    padding: 12px;
+    border: 1px solid #444;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.media-row:last-child {
+    margin-bottom: 0;
+}
+
+.media-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e8eaed;
+    margin-bottom: 4px;
+}
+
+/* Control Bar Styling */
+.media-controls {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 2px;
+    margin-top: 8px;
+}
+
+.media-controls button {
+    color: #9aa0a6;
+    background: transparent;
+    padding: 6px;
+    min-width: 44px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.media-controls button:hover {
+    background-color: #3c4043;
+    color: #8ab4f8; /* Zyro Accent Color */
+}
+
+/* Make the Play/Pause button slightly more prominent */
+.media-controls button:nth-child(2) {
+    color: #8ab4f8;
+}
+
+/* Incognito support for media row */
+window.incognito .media-row {
+    background-color: #151417;
+    border-color: #333;
+}
+
+window.incognito .media-controls button:hover {
+    color: #a142f4; /* Incognito Purple */
+}

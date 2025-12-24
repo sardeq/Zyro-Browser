@@ -14,7 +14,11 @@
 #include <iomanip>
 
 static std::vector<std::string> closed_tabs_history;
-static std::vector<std::string> last_session_urls; // Store previous session
+static std::vector<std::string> last_session_urls; 
+
+void update_media_popup();
+void create_media_player_popover(GtkWidget* btn);
+void send_media_command(WebKitWebView* view, const std::string& command);
 
 GtkWidget* create_menu_icon(const char* icon_name) {
     GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
@@ -1150,6 +1154,9 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     GtkWidget* b_home = mkbtn("go-home-symbolic", "Home");
     GtkWidget* b_menu = mkbtn("open-menu-symbolic", "Menu"); 
 
+    GtkWidget* b_media = mkbtn("media-playback-start-symbolic", "Media Control");
+    create_media_player_popover(b_media);
+
     GtkWidget* b_downloads = gtk_toggle_button_new(); 
     GtkWidget* dl_icon = gtk_image_new_from_icon_name("folder-download-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_container_add(GTK_CONTAINER(b_downloads), dl_icon);
@@ -1204,6 +1211,7 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     gtk_box_pack_start(GTK_BOX(toolbar), url_entry, TRUE, TRUE, 5);
     gtk_box_pack_start(GTK_BOX(toolbar), b_downloads, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_blocker, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b_media, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b_menu, FALSE, FALSE, 0);
 
     GtkWidget* bookmarks_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
@@ -1666,4 +1674,132 @@ void create_window(WebKitWebContext* ctx) {
     gtk_widget_show_all(win);
     
     create_new_tab(win, settings.home_url, ctx);
+}
+
+
+void send_media_command(WebKitWebView* view, const std::string& command) {
+    std::string script = 
+        "var vid = document.querySelector('video, audio');"
+        "if (vid) {"
+        "  if ('" + command + "' === 'playpause') { vid.paused ? vid.play() : vid.pause(); }"
+        "  else if ('" + command + "' === 'next') { vid.currentTime += 10; }"
+        "  else if ('" + command + "' === 'back') { vid.currentTime -= 10; }"
+        "}";
+    run_js(view, script);
+}
+
+
+void update_media_popup() {
+    if (!global_media_list_box) return;
+
+    GList *children = gtk_container_get_children(GTK_CONTAINER(global_media_list_box));
+    for(GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
+    g_list_free(children);
+
+    GtkNotebook* nb = get_notebook(global_window);
+    int n_pages = gtk_notebook_get_n_pages(nb);
+    bool found_media = false;
+
+    for (int i = 0; i < n_pages; i++) {
+        GtkWidget* page_box = gtk_notebook_get_nth_page(nb, i);
+        WebKitWebView* view = nullptr;
+        
+        GList* box_children = gtk_container_get_children(GTK_CONTAINER(page_box));
+        for (GList* l = box_children; l != NULL; l = l->next) {
+            if (WEBKIT_IS_WEB_VIEW(l->data)) {
+                view = WEBKIT_WEB_VIEW(l->data);
+                break;
+            }
+        }
+        g_list_free(box_children);
+
+        // Improved Check: WebKit flag OR Title contains common media keywords if URI is YouTube
+        const char* uri = webkit_web_view_get_uri(view);
+        bool is_potential_media = (uri && (std::string(uri).find("youtube.com") != std::string::npos || 
+                                         std::string(uri).find("spotify.com") != std::string::npos));
+
+        if (view && (webkit_web_view_is_playing_audio(view) || is_potential_media)) {
+            found_media = true;
+            const char* title = webkit_web_view_get_title(view);
+
+            GtkWidget* row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+            gtk_style_context_add_class(gtk_widget_get_style_context(row), "media-row");
+
+            GtkWidget* header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+            GtkWidget* title_lbl = gtk_label_new(title ? title : "Active Media");
+            gtk_label_set_ellipsize(GTK_LABEL(title_lbl), PANGO_ELLIPSIZE_END);
+            gtk_style_context_add_class(gtk_widget_get_style_context(title_lbl), "media-title");
+            
+            gtk_box_pack_start(GTK_BOX(header_box), gtk_image_new_from_icon_name("audio-x-generic-symbolic", GTK_ICON_SIZE_MENU), FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(header_box), title_lbl, TRUE, TRUE, 0);
+
+            GtkWidget* ctrl_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+            gtk_style_context_add_class(gtk_widget_get_style_context(ctrl_box), "media-controls");
+            
+            GtkWidget* b_back = gtk_button_new_from_icon_name("media-seek-backward-symbolic", GTK_ICON_SIZE_BUTTON);
+            GtkWidget* b_pp = gtk_button_new_from_icon_name("media-playback-start-symbolic", GTK_ICON_SIZE_BUTTON);
+            GtkWidget* b_next = gtk_button_new_from_icon_name("media-seek-forward-symbolic", GTK_ICON_SIZE_BUTTON);
+            GtkWidget* b_goto = gtk_button_new_from_icon_name("go-jump-symbolic", GTK_ICON_SIZE_BUTTON);
+            
+            g_signal_connect(b_pp, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ send_media_command((WebKitWebView*)v, "playpause"); }), view);
+            g_signal_connect(b_back, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ send_media_command((WebKitWebView*)v, "back"); }), view);
+            g_signal_connect(b_next, "clicked", G_CALLBACK(+[](GtkButton*, gpointer v){ send_media_command((WebKitWebView*)v, "next"); }), view);
+            
+            struct TabJump { GtkNotebook* n; int p; };
+            TabJump* jump = new TabJump{ nb, i };
+            g_signal_connect(b_goto, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data){
+                TabJump* d = (TabJump*)data;
+                gtk_notebook_set_current_page(d->n, d->p);
+                gtk_popover_popdown(GTK_POPOVER(global_media_popover));
+                delete d;
+            }), jump);
+
+            gtk_box_pack_start(GTK_BOX(ctrl_box), b_back, TRUE, TRUE, 0);
+            gtk_box_pack_start(GTK_BOX(ctrl_box), b_pp, TRUE, TRUE, 0);
+            gtk_box_pack_start(GTK_BOX(ctrl_box), b_next, TRUE, TRUE, 0);
+            gtk_box_pack_start(GTK_BOX(ctrl_box), b_goto, TRUE, TRUE, 0);
+
+            gtk_box_pack_start(GTK_BOX(row), header_box, FALSE, FALSE, 5);
+            gtk_box_pack_start(GTK_BOX(row), ctrl_box, FALSE, FALSE, 5);
+            
+            gtk_container_add(GTK_CONTAINER(global_media_list_box), row);
+        }
+    }
+
+    if (!found_media) {
+        GtkWidget* empty_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        gtk_style_context_add_class(gtk_widget_get_style_context(empty_box), "media-empty-state");
+        
+        GtkWidget* icon = gtk_image_new_from_icon_name("audio-volume-muted-symbolic", GTK_ICON_SIZE_DIALOG);
+        GtkWidget* label = gtk_label_new("No media playing");
+        
+        gtk_box_pack_start(GTK_BOX(empty_box), icon, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(empty_box), label, FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(global_media_list_box), empty_box);
+    }
+    gtk_widget_show_all(global_media_list_box);
+}
+
+void create_media_player_popover(GtkWidget* btn) {
+    global_media_popover = gtk_popover_new(btn);
+    gtk_popover_set_position(GTK_POPOVER(global_media_popover), GTK_POS_BOTTOM);
+    
+    GtkWidget* outer_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_size_request(outer_box, 300, 150); 
+    g_object_set(outer_box, "margin", 12, NULL);
+    
+    GtkWidget* title = gtk_label_new("<b>Global Media Control</b>");
+    gtk_label_set_use_markup(GTK_LABEL(title), TRUE);
+    
+    global_media_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    
+    gtk_box_pack_start(GTK_BOX(outer_box), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(outer_box), global_media_list_box, TRUE, TRUE, 0);
+    
+    gtk_container_add(GTK_CONTAINER(global_media_popover), outer_box);
+    
+    g_signal_connect(btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer){
+        update_media_popup();
+        gtk_popover_popup(GTK_POPOVER(global_media_popover));
+    }), NULL);
 }

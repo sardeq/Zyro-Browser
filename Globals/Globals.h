@@ -86,3 +86,6 @@ extern GtkWidget* global_downloads_btn;
 
 extern bool global_blocker_enabled; 
 extern WebKitUserContentFilter* global_filter;
+
+extern GtkWidget* global_media_popover;
+extern GtkWidget* global_media_list_box;
