@@ -14,12 +14,52 @@
 #include <iomanip>
 
 static std::vector<std::string> closed_tabs_history;
+static std::vector<std::string> last_session_urls; // Store previous session
 
 GtkWidget* create_menu_icon(const char* icon_name) {
     GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
     gtk_image_set_pixel_size(GTK_IMAGE(img), 16);
     return img;
 }
+
+
+void save_session_to_disk(GtkWidget* win) {
+    GtkNotebook* nb = get_notebook(win);
+    if (!nb) return;
+
+    std::ofstream f(get_user_data_dir() + "last_session.txt");
+    int n_pages = gtk_notebook_get_n_pages(nb);
+    
+    for (int i = 0; i < n_pages; i++) {
+        GtkWidget* page = gtk_notebook_get_nth_page(nb, i);
+        GList* children = gtk_container_get_children(GTK_CONTAINER(page));
+        for (GList* l = children; l; l = l->next) {
+            if (WEBKIT_IS_WEB_VIEW(l->data)) {
+                WebKitWebView* view = WEBKIT_WEB_VIEW(l->data);
+                
+                webkit_web_view_stop_loading(view);
+
+                const char* uri = webkit_web_view_get_uri(view);
+                if (uri && strlen(uri) > 0) {
+                    f << uri << "\n";
+                }
+                break;
+            }
+        }
+        g_list_free(children);
+    }
+}
+
+void load_session_into_memory() {
+    last_session_urls.clear();
+    std::ifstream f(get_user_data_dir() + "last_session.txt");
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty()) last_session_urls.push_back(line);
+    }
+}
+
+// ----------------------------------
 
 void show_site_info_popover(GtkEntry* entry, WebKitWebView* view);
 void show_menu(GtkButton* btn, gpointer win);
@@ -1295,24 +1335,21 @@ void show_search_overlay(GtkWidget* parent_win) {
     gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(tree_view), FALSE);
     gtk_tree_view_set_activate_on_single_click(GTK_TREE_VIEW(tree_view), FALSE);
     
-    // --- Renderer Settings (FIX IS HERE) ---
     GtkCellRenderer* renderer = gtk_cell_renderer_text_new();
     g_object_set(renderer, 
         "height", 30, 
         "xpad", 10, 
-        "ellipsize", PANGO_ELLIPSIZE_END,  // Cuts off text with "..." at the end
+        "ellipsize", PANGO_ELLIPSIZE_END,
         NULL
     );
 
     GtkTreeViewColumn* col = gtk_tree_view_column_new_with_attributes("Result", renderer, "text", 0, NULL);
-    // Force the column to take available space but NOT request more than the window has
     gtk_tree_view_column_set_expand(col, TRUE); 
     gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view), col);
 
     gtk_container_add(GTK_CONTAINER(scrolled), tree_view);
     gtk_box_pack_start(GTK_BOX(main_box), scrolled, TRUE, TRUE, 0);
 
-    // --- Logic ---
     g_signal_connect(entry, "changed", G_CALLBACK(+[](GtkEditable* e, gpointer data){
         GtkListStore* s = GTK_LIST_STORE(data);
         std::string text = gtk_entry_get_text(GTK_ENTRY(e));
@@ -1415,6 +1452,12 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
                     std::string last_url = closed_tabs_history.back();
                     closed_tabs_history.pop_back();
                     create_new_tab(widget, last_url, global_context);
+                } 
+                else if (!last_session_urls.empty()) {
+                    for (const auto& u : last_session_urls) {
+                        create_new_tab(widget, u, global_context);
+                    }
+                    last_session_urls.clear();
                 }
                 return TRUE;
 
@@ -1532,10 +1575,21 @@ void create_window(WebKitWebContext* ctx) {
 
     if (!is_incognito) {
         global_window = win;
+        // Preload session into memory
+        load_session_into_memory();
+        
+        // Save session on close (and fix WebKit exit crash by stopping loads)
+        g_signal_connect(win, "delete-event", G_CALLBACK(+[](GtkWidget* w, GdkEvent*, gpointer) -> gboolean {
+            save_session_to_disk(w);
+            return FALSE; // Propagate to destroy
+        }), NULL);
+        
         g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     } else {
         gtk_window_set_title(GTK_WINDOW(win), "Zyro (Incognito)");
         gtk_style_context_add_class(gtk_widget_get_style_context(win), "incognito");
+        // Don't save session for incognito, but standard destroy
+        g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     }
 
     if (!is_incognito) gtk_window_set_title(GTK_WINDOW(win), "Zyro");
@@ -1574,7 +1628,6 @@ void create_window(WebKitWebContext* ctx) {
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(win), box);
 
-    g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
     if (!webkit_web_context_is_ephemeral(ctx)) {
         g_timeout_add_seconds(10, auto_save_data, NULL); 
