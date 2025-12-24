@@ -109,7 +109,7 @@
             font-size: 14px;
         }
 
-        /* Custom Dropdown Arrow & Colors */
+        /* Custom Dropdown Arrow */
         select {
             appearance: none;
             -webkit-appearance: none;
@@ -120,13 +120,7 @@
             padding-right: 30px;
         }
 
-        /* Force options to have dark background */
-        option {
-            background-color: var(--panel);
-            color: var(--text);
-            padding: 10px;
-        }
-
+        option { background-color: var(--panel); color: var(--text); padding: 10px; }
         select:focus, input:focus { border-color: var(--accent); }
 
         button { 
@@ -138,38 +132,33 @@
         
         .btn-danger { background: #e06c75; color: white; }
 
+        /* --- Toggle Switch --- */
+        .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+        .toggle-row span { font-size: 14px; }
+        .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #555; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--accent); }
+        input:checked + .slider:before { transform: translateX(18px); }
+
         /* --- Shortcuts Table --- */
         .shortcuts-table {
-            width: 100%;
-            border-collapse: collapse;
-            background: var(--panel);
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid var(--border);
+            width: 100%; border-collapse: collapse; background: var(--panel);
+            border-radius: 8px; overflow: hidden; border: 1px solid var(--border);
         }
         .shortcuts-table th, .shortcuts-table td {
-            text-align: left;
-            padding: 12px 20px;
-            border-bottom: 1px solid var(--border);
+            text-align: left; padding: 12px 20px; border-bottom: 1px solid var(--border);
         }
         .shortcuts-table th {
-            background: rgba(0,0,0,0.2);
-            font-weight: 600;
-            color: var(--accent);
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            background: rgba(0,0,0,0.2); font-weight: 600; color: var(--accent);
+            font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;
         }
         .shortcuts-table tr:last-child td { border-bottom: none; }
         .key-badge {
-            display: inline-block;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 2px 8px;
-            font-family: 'Consolas', monospace;
-            font-size: 12px;
-            color: var(--text);
+            display: inline-block; background: rgba(255,255,255,0.1);
+            border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px;
+            font-family: 'Consolas', monospace; font-size: 12px; color: var(--text);
         }
         
         /* Toast */
@@ -188,7 +177,8 @@
     <div class="sidebar">
         <h2>Settings</h2>
         <div class="nav-item active" onclick="showTab('general', this)">General</div>
-        <div class="nav-item" onclick="showTab('shortcuts', this)">Keyboard Shortcuts</div>
+        <div class="nav-item" onclick="showTab('appearance', this)">Appearance</div>
+        <div class="nav-item" onclick="showTab('shortcuts', this)">Shortcuts</div>
         <div class="nav-item" onclick="showTab('privacy', this)">Privacy</div>
     </div>
 
@@ -196,7 +186,6 @@
         
         <div id="general" class="tab-panel active">
             <h1>General</h1>
-            
             <div class="setting-group">
                 <label>Search Engine</label>
                 <p class="desc">Select the default search engine for the address bar.</p>
@@ -206,47 +195,70 @@
                     <option value="https://www.bing.com/search?q=">Bing</option>
                 </select>
             </div>
+        </div>
+
+        <div id="appearance" class="tab-panel">
+            <h1>Appearance</h1>
+            <p class="desc">Customize the browser theme and New Tab page.</p>
 
             <div class="setting-group">
-                <label>Appearance</label>
-                <p class="desc">Choose your preferred color theme.</p>
-                <select id="theme" onchange="saveGeneralSettings()">
-                    <option value="dark">Dark Mode</option>
-                    <option value="light">Light Mode</option>
+                <label>Browser Theme</label>
+                <select id="pref-theme" onchange="saveHomePrefs()">
+                    <option value="dark">Dark (Default)</option>
+                    <option value="light">Light</option>
+                    <option value="midnight">Midnight (OLED)</option>
+                    <option value="ocean">Deep Ocean</option>
+                    <option value="sunset">Sunset Purple</option>
                 </select>
+            </div>
+
+            <div class="setting-group">
+                <label>New Tab Background</label>
+                <select id="pref-bg-type" onchange="saveHomePrefs()">
+                    <option value="default">Use Theme Colors</option>
+                    <option value="custom">Custom Image (Set in New Tab)</option>
+                </select>
+            </div>
+
+            <div class="setting-group">
+                <label>Home Page Widgets</label>
+                <div class="toggle-row">
+                    <span>Show CPU Usage</span>
+                    <label class="switch"><input type="checkbox" id="pref-show-cpu" onchange="saveHomePrefs()"><span class="slider"></span></label>
+                </div>
+                <div class="toggle-row">
+                    <span>Show RAM Usage</span>
+                    <label class="switch"><input type="checkbox" id="pref-show-ram" onchange="saveHomePrefs()"><span class="slider"></span></label>
+                </div>
+                <div class="toggle-row">
+                    <span>Show Shortcuts Grid</span>
+                    <label class="switch"><input type="checkbox" id="pref-show-sc" onchange="saveHomePrefs()"><span class="slider"></span></label>
+                </div>
             </div>
         </div>
 
         <div id="shortcuts" class="tab-panel">
             <h1>Keyboard Shortcuts</h1>
-            <p class="desc">Reference list of available keyboard commands.</p>
-            
             <table class="shortcuts-table">
-                <thead>
-                    <tr>
-                        <th>Action</th>
-                        <th>Shortcut</th>
-                    </tr>
-                </thead>
+                <thead><tr><th>Action</th><th>Shortcut</th></tr></thead>
                 <tbody>
                     <tr><td>New Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">T</span></td></tr>
+                    <tr><td>Restore Closed Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">Shift</span> + <span class="key-badge">T</span></td></tr>
                     <tr><td>Close Current Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">W</span></td></tr>
+                    <tr><td>Switch to Next Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">Tab</span></td></tr>
+                    <tr><td>Switch to Prev Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">Shift</span> + <span class="key-badge">Tab</span></td></tr>
+                    <tr><td>Switch to Tab 1-9</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">1</span>...<span class="key-badge">9</span></td></tr>
                     <tr><td>Reload Page</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">R</span> / <span class="key-badge">F5</span></td></tr>
-                    <tr><td>Focus Address Bar / Search</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">L</span> / <span class="key-badge">Alt</span> + <span class="key-badge">L</span></td></tr>
-                    <tr><td>Next Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">Tab</span> / <span class="key-badge">PageDown</span></td></tr>
-                    <tr><td>Previous Tab</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">PageUp</span></td></tr>
-                    <tr><td>Go Back</td><td><span class="key-badge">Alt</span> + <span class="key-badge">Left</span></td></tr>
-                    <tr><td>Go Forward</td><td><span class="key-badge">Alt</span> + <span class="key-badge">Right</span></td></tr>
+                    <tr><td>Focus Search</td><td><span class="key-badge">Ctrl</span> + <span class="key-badge">L</span></td></tr>
                 </tbody>
             </table>
         </div>
 
         <div id="privacy" class="tab-panel">
             <h1>Privacy & Security</h1>
-            
             <div class="setting-group">
                 <label>Clear Browsing Data</label>
-                <p class="desc">Clear temporary files, cookies, and cached images to free up space or fix issues.</p>
+                <p class="desc">Clear temporary files, cookies, and cached images.</p>
                 <button class="btn-danger" onclick="clearCache()">Clear Cache & Cookies</button>
             </div>
         </div>
@@ -259,7 +271,6 @@
         function showTab(tabId, navItem) {
             document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            
             document.getElementById(tabId).classList.add('active');
             navItem.classList.add('active');
         }
@@ -271,28 +282,60 @@
             setTimeout(() => x.className = x.className.replace("show", ""), 3000);
         }
 
+        // Called by backend (General settings)
         function loadCurrentSettings(engine, theme) {
             document.getElementById('engine').value = engine;
-            document.getElementById('theme').value = theme;
-            setTheme(theme);
+        }
+
+        // Called by backend (Home/Appearance settings)
+        function loadPreferences(prefs) {
+            document.getElementById('pref-theme').value = prefs.theme;
+            setTheme(prefs.theme);
+            
+            document.getElementById('pref-bg-type').value = prefs.bg_type;
+            document.getElementById('pref-show-cpu').checked = prefs.show_cpu;
+            document.getElementById('pref-show-ram').checked = prefs.show_ram;
+            document.getElementById('pref-show-sc').checked = prefs.show_shortcuts;
         }
 
         function setTheme(themeName) {
             document.body.className = 'theme-' + themeName;
-            document.getElementById('theme').value = themeName;
         }
 
         function saveGeneralSettings() {
             const engine = document.getElementById('engine').value;
-            const theme = document.getElementById('theme').value;
-            setTheme(theme);
+            // We use the theme dropdown in Appearance tab now, so we don't send theme from here unless necessary
+            // But save_settings usually expects both. We can get the value from Appearance tab.
+            const theme = document.getElementById('pref-theme').value;
             
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({
                 type: 'save_settings',
                 engine: engine,
                 theme: theme
             }));
-            showToast('Preferences Saved');
+            showToast('Search Engine Saved');
+        }
+
+        function saveHomePrefs() {
+            const theme = document.getElementById('pref-theme').value;
+            const bgType = document.getElementById('pref-bg-type').value;
+            const sCpu = document.getElementById('pref-show-cpu').checked;
+            const sRam = document.getElementById('pref-show-ram').checked;
+            const sSc = document.getElementById('pref-show-sc').checked;
+            
+            setTheme(theme);
+
+            const msg = {
+                type: 'save_home_prefs',
+                theme: theme,
+                bg_type: bgType,
+                show_cpu: sCpu,
+                show_ram: sRam,
+                show_shortcuts: sSc
+            };
+            
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify(msg));
+            showToast('Appearance Saved');
         }
 
         function clearCache() {
@@ -303,6 +346,8 @@
 
         window.onload = () => {
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_settings' }));
+            // Also request home prefs to fill Appearance tab
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_home_prefs' }));
         }
     </script>
 </body>

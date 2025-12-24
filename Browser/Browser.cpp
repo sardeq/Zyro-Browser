@@ -13,7 +13,7 @@
 #include <fstream>
 #include <iomanip>
 
-
+static std::vector<std::string> closed_tabs_history;
 
 GtkWidget* create_menu_icon(const char* icon_name) {
     GtkWidget* img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU);
@@ -788,12 +788,32 @@ void on_load_changed(WebKitWebView* web_view, WebKitLoadEvent load_event, gpoint
     }
 }
 
+void close_tab_with_history(GtkWidget* widget, GtkNotebook* nb, int page_num) {
+    GtkWidget* page = gtk_notebook_get_nth_page(nb, page_num);
+    GList* children = gtk_container_get_children(GTK_CONTAINER(page));
+    
+    for(GList* l = children; l; l = l->next) {
+        if(WEBKIT_IS_WEB_VIEW(l->data)) {
+            const char* uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(l->data));
+            if (uri) {
+                closed_tabs_history.push_back(std::string(uri));
+                if (closed_tabs_history.size() > 20) closed_tabs_history.erase(closed_tabs_history.begin());
+            }
+            break;
+        }
+    }
+    g_list_free(children);
+    
+    gtk_notebook_remove_page(nb, page_num);
+    if (gtk_notebook_get_n_pages(nb) == 0) gtk_widget_destroy(widget);
+}
+
 static void on_tab_close(GtkButton*, gpointer v_box_widget) { 
     GtkWidget* win = GTK_WIDGET(g_object_get_data(G_OBJECT(v_box_widget), "win"));
     GtkNotebook* nb = get_notebook(win);
     int page_num = gtk_notebook_page_num(nb, GTK_WIDGET(v_box_widget));
     if (page_num != -1) {
-        gtk_notebook_remove_page(nb, page_num);
+        close_tab_with_history(win, nb, page_num);
     }
 }
 
@@ -1387,6 +1407,42 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
     GtkEntry* url_entry = nullptr;
     if (view) url_entry = GTK_ENTRY(g_object_get_data(G_OBJECT(view), "entry"));
 
+    if ((event->state & GDK_CONTROL_MASK) && (event->state & GDK_SHIFT_MASK)) {
+        switch (event->keyval) {
+            case GDK_KEY_t: 
+            case GDK_KEY_T:
+                if (!closed_tabs_history.empty()) {
+                    std::string last_url = closed_tabs_history.back();
+                    closed_tabs_history.pop_back();
+                    create_new_tab(widget, last_url, global_context);
+                }
+                return TRUE;
+
+            case GDK_KEY_Tab:
+            case GDK_KEY_ISO_Left_Tab:
+                if (nb) {
+                    int curr = gtk_notebook_get_current_page(nb);
+                    int last = gtk_notebook_get_n_pages(nb) - 1;
+                    gtk_notebook_set_current_page(nb, (curr == 0) ? last : curr - 1);
+                }
+                return TRUE;
+        }
+    }
+
+    if ((event->state & GDK_CONTROL_MASK) && !(event->state & GDK_SHIFT_MASK)) {
+        if (event->keyval >= GDK_KEY_1 && event->keyval <= GDK_KEY_8) {
+            int page_idx = event->keyval - GDK_KEY_1; 
+            if (page_idx < gtk_notebook_get_n_pages(nb)) {
+                gtk_notebook_set_current_page(nb, page_idx);
+            }
+            return TRUE;
+        }
+        if (event->keyval == GDK_KEY_9) {
+            gtk_notebook_set_current_page(nb, gtk_notebook_get_n_pages(nb) - 1);
+            return TRUE;
+        }
+    }
+
 
     if ((event->state & GDK_CONTROL_MASK) && (event->state & GDK_MOD1_MASK)) {
         if (event->keyval == GDK_KEY_l || event->keyval == GDK_KEY_L) {
@@ -1413,8 +1469,7 @@ gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
             case GDK_KEY_w: {
                 int page = gtk_notebook_get_current_page(nb);
                 if (page != -1) {
-                    gtk_notebook_remove_page(nb, page);
-                    if (gtk_notebook_get_n_pages(nb) == 0) gtk_widget_destroy(widget);
+                    close_tab_with_history(widget, nb, page);
                 }
                 return TRUE;
             }
