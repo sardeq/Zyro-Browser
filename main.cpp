@@ -60,6 +60,12 @@ int main(int argc, char** argv) {
     std::string cache = user_dir + "cache";
     std::string data = user_dir + "data";
 
+    load_data();
+
+
+    init_security(); 
+    init_blocker();
+
     WebKitWebsiteDataManager* mgr = webkit_website_data_manager_new(
         "base-cache-directory", cache.c_str(), 
         "base-data-directory", data.c_str(), 
@@ -68,33 +74,38 @@ int main(int argc, char** argv) {
 
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
 
-    webkit_web_context_set_cache_model(global_context, WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
+    WebKitCacheModel model = (settings.cache_model == "web-browser") ? 
+        WEBKIT_CACHE_MODEL_WEB_BROWSER : WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER;
+    webkit_web_context_set_cache_model(global_context, model);
+
+    if (settings.cache_model == "web-browser") {
+        webkit_web_context_set_cache_model(global_context, WEBKIT_CACHE_MODEL_WEB_BROWSER);
+    } else {
+        webkit_web_context_set_cache_model(global_context, WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
+    }
 
     std::string extension_dir = get_self_path() + "/lib";
     webkit_web_context_set_web_extensions_directory(global_context, extension_dir.c_str());
 
     
-    //temp
-    webkit_web_context_set_cache_model(
-        global_context, 
-        WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER 
-    );
+
+
     webkit_cookie_manager_set_persistent_storage(
         webkit_web_context_get_cookie_manager(global_context), 
         (data+"/cookies.sqlite").c_str(), 
         WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE
     );
 
-    init_security(); 
-    init_blocker();
-    load_data();
+
     create_window(global_context);
 
     g_timeout_add(500, refresh_download_popup_timer, NULL);
     g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
     g_timeout_add(3000, update_home_stats, NULL);
 
-    g_timeout_add_seconds(15, memory_trim_timer, NULL);
+    if (settings.enable_memory_trim) {
+        g_timeout_add_seconds(15, memory_trim_timer, NULL);
+    }
     
     gtk_main();
     return 0;

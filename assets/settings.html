@@ -180,6 +180,7 @@
         <div class="nav-item" onclick="showTab('appearance', this)">Appearance</div>
         <div class="nav-item" onclick="showTab('shortcuts', this)">Shortcuts</div>
         <div class="nav-item" onclick="showTab('privacy', this)">Privacy</div>
+        <div class="nav-item" onclick="showTab('performance', this)">Performance</div>
     </div>
 
     <div class="content">
@@ -188,12 +189,16 @@
             <h1>General</h1>
             <div class="setting-group">
                 <label>Search Engine</label>
-                <p class="desc">Select the default search engine for the address bar.</p>
                 <select id="engine" onchange="saveGeneralSettings()">
                     <option value="https://www.google.com/search?q=">Google</option>
                     <option value="https://duckduckgo.com/?q=">DuckDuckGo</option>
                     <option value="https://www.bing.com/search?q=">Bing</option>
                 </select>
+            </div>
+            <div class="setting-group">
+                <label>Startup Page</label>
+                <p class="desc">Choose what to show when opening a new window.</p>
+                <input type="text" id="startup-url" placeholder="https://..." onchange="saveGeneralSettings()">
             </div>
         </div>
 
@@ -260,6 +265,37 @@
                 <label>Clear Browsing Data</label>
                 <p class="desc">Clear temporary files, cookies, and cached images.</p>
                 <button class="btn-danger" onclick="clearCache()">Clear Cache & Cookies</button>
+            </div>
+        </div>
+
+        <div id="performance" class="tab-panel">
+            <h1>Performance</h1>
+            <p class="desc">Optimize how Zyro uses your system resources.</p>
+            
+            <div class="setting-group">
+                <div class="toggle-row">
+                    <div>
+                        <span>Hardware Acceleration</span>
+                        <p class="desc">Use the GPU to render web content (restart required).</p>
+                    </div>
+                    <label class="switch"><input type="checkbox" id="pref-hw-accel" onchange="savePerformanceSettings()"><span class="slider"></span></label>
+                </div>
+                
+                <div class="toggle-row">
+                    <div>
+                        <span>Memory Saver</span>
+                        <p class="desc">Automatically trim memory of inactive tabs every 15s.</p>
+                    </div>
+                    <label class="switch"><input type="checkbox" id="pref-mem-trim" onchange="savePerformanceSettings()"><span class="slider"></span></label>
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label>Cache Model</label>
+                <select id="pref-cache-model" onchange="savePerformanceSettings()">
+                    <option value="document-viewer">Lightweight (Lower RAM)</option>
+                    <option value="web-browser">Standard (Faster Back/Forward)</option>
+                </select>
             </div>
         </div>
 
@@ -344,10 +380,29 @@
             }
         }
 
+        function loadPerformanceSettings(prefs) {
+            document.getElementById('pref-hw-accel').checked = prefs.hw_accel;
+            document.getElementById('pref-mem-trim').checked = prefs.mem_trim;
+            document.getElementById('pref-cache-model').value = prefs.cache_model;
+        }
+
+        function savePerformanceSettings() {
+            const hw = document.getElementById('pref-hw-accel').checked;
+            const trim = document.getElementById('pref-mem-trim').checked;
+            const cache = document.getElementById('pref-cache-model').value;
+
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({
+                type: 'save_performance_settings',
+                hw_accel: hw,
+                mem_trim: trim,
+                cache_model: cache
+            }));
+        }
+
         window.onload = () => {
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_settings' }));
-            // Also request home prefs to fill Appearance tab
             window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_home_prefs' }));
+            window.webkit.messageHandlers.zyro.postMessage(JSON.stringify({ type: 'get_performance_settings' }));
         }
     </script>
 </body>

@@ -52,6 +52,10 @@ void save_settings(const std::string& engine, const std::string& theme) {
     g_key_file_set_boolean(key_file, "Home", "show_shortcuts", settings.show_shortcuts);
     g_key_file_set_string(key_file, "Home", "bg_type", settings.bg_type.c_str());
 
+    g_key_file_set_boolean(key_file, "Performance", "hw_accel", settings.hardware_acceleration);
+    g_key_file_set_boolean(key_file, "Performance", "mem_trim", settings.enable_memory_trim);
+    g_key_file_set_string(key_file, "Performance", "cache_model", settings.cache_model.c_str());
+
     g_key_file_save_to_file(key_file, (get_user_data_dir() + "settings.ini").c_str(), NULL);
     g_key_file_free(key_file);
 }
@@ -122,6 +126,20 @@ void load_data() {
         if (g_key_file_has_key(key_file, "Home", "show_shortcuts", NULL))
             settings.show_shortcuts = g_key_file_get_boolean(key_file, "Home", "show_shortcuts", NULL);
 
+        if (g_key_file_has_group(key_file, "Performance")) {
+            if (g_key_file_has_key(key_file, "Performance", "hw_accel", NULL))
+                settings.hardware_acceleration = g_key_file_get_boolean(key_file, "Performance", "hw_accel", NULL);
+            
+            if (g_key_file_has_key(key_file, "Performance", "mem_trim", NULL))
+                settings.enable_memory_trim = g_key_file_get_boolean(key_file, "Performance", "mem_trim", NULL);
+                
+            gchar* cm = g_key_file_get_string(key_file, "Performance", "cache_model", NULL);
+            if (cm) { 
+                settings.cache_model = cm; 
+                g_free(cm); 
+            }
+        }
+            
         gchar* bg = g_key_file_get_string(key_file, "Home", "bg_type", NULL);
         if (bg) { settings.bg_type = bg; g_free(bg); }
     }

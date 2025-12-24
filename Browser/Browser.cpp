@@ -599,6 +599,24 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
         std::string status = is_incognito ? "true" : "false";
         run_js(view, "setIncognitoMode(" + status + ");");
     }
+    else if (type == "save_performance_settings") {
+        settings.hardware_acceleration = get_json_bool("hw_accel");
+        settings.enable_memory_trim = get_json_bool("mem_trim");
+        settings.cache_model = get_json_val("cache_model");
+        
+        save_settings(settings.search_engine, settings.theme); 
+        run_js(view, "showToast('Performance settings will apply after restart');");
+    }
+    else if (type == "get_performance_settings") {
+        std::stringstream ss;
+        ss << "{";
+        ss << "\"hw_accel\": " << (settings.hardware_acceleration ? "true" : "false") << ",";
+        ss << "\"mem_trim\": " << (settings.enable_memory_trim ? "true" : "false") << ",";
+        ss << "\"cache_model\": \"" << settings.cache_model << "\"";
+        ss << "}";
+        
+        run_js(view, "loadPerformanceSettings(" + ss.str() + ");");
+    }
 }
 
 void try_autofill(WebKitWebView* view, const char* uri) {
@@ -1100,7 +1118,19 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     webkit_settings_set_enable_smooth_scrolling(wk_settings, TRUE);
 
     //webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
-    webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND);
+    //webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND);
+
+    if (settings.hardware_acceleration) {
+    webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
+    } else {
+        webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
+    }
+
+    if (settings.cache_model == "document-viewer") {
+    webkit_web_context_set_cache_model(global_context, WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
+    } else {
+        webkit_web_context_set_cache_model(global_context, WEBKIT_CACHE_MODEL_WEB_BROWSER);
+    }
 
     g_signal_connect(view, "user-message-received", G_CALLBACK(on_user_message_received), NULL);
 

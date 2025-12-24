@@ -21,6 +21,10 @@ struct AppSettings {
     bool show_ram = true;
     bool show_shortcuts = true;
     std::string bg_type = "default";
+
+    bool hardware_acceleration = true;
+    bool enable_memory_trim = true;
+    std::string cache_model = "document-viewer";
 };
 
 struct HistoryItem {
