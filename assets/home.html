@@ -29,8 +29,29 @@
         .search-container { width: 600px; max-width: 90%; position: relative; z-index: 10; }
         .search-box { width: 100%; background: var(--panel); border-radius: 30px; padding: 12px 24px; box-shadow: 0 4px 15px var(--shadow); display: flex; align-items: center; box-sizing: border-box; transition: transform 0.2s, box-shadow 0.2s; }
         .search-box.open { border-radius: 24px 24px 0 0; }
-        input { flex: 1; background: transparent; border: none; font-size: 18px; color: var(--text); outline: none; margin-left: 10px; }
         
+        input { 
+            flex: 1; 
+            background: transparent !important; 
+            border: none !important; 
+            outline: none !important;
+            box-shadow: none !important;
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            
+            font-size: 18px; 
+            color: var(--text); 
+            margin-left: 10px; 
+        }
+
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover, 
+        input:-webkit-autofill:focus {
+            -webkit-text-fill-color: var(--text);
+            -webkit-box-shadow: 0 0 0px 1000px var(--panel) inset !important;
+            transition: background-color 5000s ease-in-out 0s;
+        }
+
         /* Suggestions */
         .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: var(--panel); border-top: 1px solid #333; border-radius: 0 0 24px 24px; box-shadow: 0 10px 20px var(--shadow); display: none; flex-direction: column; overflow: hidden; }
         body.theme-light .suggestions { border-top: 1px solid #ddd; }

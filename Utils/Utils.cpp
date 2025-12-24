@@ -193,6 +193,10 @@ std::string get_process_name(int pid) {
 }
 
 void apply_browser_theme(const std::string& theme_name) {
+    GtkSettings* gtk_settings = gtk_settings_get_default();
+    gboolean use_dark = (theme_name != "light"); 
+    g_object_set(gtk_settings, "gtk-application-prefer-dark-theme", use_dark, NULL);
+
     std::string css_data;
     
     if (theme_name == "light") {
