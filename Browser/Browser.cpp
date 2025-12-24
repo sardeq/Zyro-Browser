@@ -1027,6 +1027,8 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
 
     webkit_settings_set_enable_page_cache(wk_settings, FALSE); 
+
+    webkit_settings_set_enable_site_specific_quirks(wk_settings, FALSE);
     
     // may delete, ts for offline cache, 
     // yeah i deleted to silence warning no need for it anyways
