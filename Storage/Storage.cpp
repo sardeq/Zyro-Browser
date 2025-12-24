@@ -72,12 +72,19 @@ gboolean auto_save_data(gpointer user_data) {
 
 void add_history_item(const std::string& url, const std::string& title) {
     if (url.find("file://") == 0 || url.empty()) return; 
-    auto it = std::remove_if(browsing_history.begin(), browsing_history.end(), [&](const HistoryItem& i){ return i.url == url; });
+    
+    auto it = std::remove_if(browsing_history.begin(), browsing_history.end(), 
+        [&](const HistoryItem& i){ return i.url == url; });
     browsing_history.erase(it, browsing_history.end());
+    
     HistoryItem item = { title.empty() ? url : title, url, get_current_time_str() };
     browsing_history.push_back(item);
+
+    if (browsing_history.size() > 500) {
+        browsing_history.erase(browsing_history.begin(), browsing_history.begin() + (browsing_history.size() - 500));
+    }
+    
     history_dirty = true;
-    //save_history_to_disk();
 }
 
 

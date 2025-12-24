@@ -457,6 +457,8 @@ static void on_script_message(WebKitUserContentManager* manager, WebKitJavascrip
     else if (type == "clear_cache") {
         WebKitWebsiteDataManager* mgr = webkit_web_context_get_website_data_manager(global_context);
         webkit_website_data_manager_clear(mgr, WEBKIT_WEBSITE_DATA_ALL, 0, NULL, NULL, NULL);
+        // Force drop memory caches
+        webkit_web_context_clear_cache(global_context);
         run_js(view, "showToast('Cache Cleared');"); 
     }
     else if (type == "open_url") {
@@ -1024,11 +1026,19 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     WebKitSettings *wk_settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(view));
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
 
+    webkit_settings_set_enable_page_cache(wk_settings, FALSE); 
+    
+    // may delete, ts for offline cache, 
+    // yeah i deleted to silence warning no need for it anyways
+    //webkit_settings_set_enable_offline_web_application_cache(wk_settings, FALSE);
+
 
     webkit_settings_set_enable_webgl(wk_settings, TRUE);
     webkit_settings_set_enable_media_stream(wk_settings, TRUE);
     webkit_settings_set_enable_smooth_scrolling(wk_settings, TRUE);
-    webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
+
+    //webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
+    webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND);
 
     g_signal_connect(view, "user-message-received", G_CALLBACK(on_user_message_received), NULL);
 
@@ -1496,9 +1506,12 @@ void create_window(WebKitWebContext* ctx) {
 
     g_signal_connect(add_tab_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data){
         GtkWidget* w = GTK_WIDGET(data);
-        WebKitWebView* v = get_active_webview(w);
+        
+        WebKitWebView* v = get_active_webview(w); 
+        
         WebKitWebContext* c = v ? webkit_web_view_get_context(v) : global_context;
-        create_new_tab(w, settings.home_url, c);
+        
+        create_new_tab(w, settings.home_url, c, v); 
     }), win);
 
     gtk_box_pack_start(GTK_BOX(box), nb, TRUE, TRUE, 0);

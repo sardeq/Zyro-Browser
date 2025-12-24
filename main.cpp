@@ -7,6 +7,18 @@
 #include "Browser.h"
 #include "Blocker.h"
 
+#ifdef __linux__
+#include <malloc.h>
+#endif
+
+
+static gboolean memory_trim_timer(gpointer) {
+#ifdef __linux__
+    malloc_trim(0);
+#endif
+    return TRUE; 
+}
+
 static gboolean refresh_download_popup_timer(gpointer) {
     if (global_downloads_popover && gtk_widget_get_visible(global_downloads_popover)) {
         update_downloads_popup();
@@ -56,6 +68,8 @@ int main(int argc, char** argv) {
 
     global_context = webkit_web_context_new_with_website_data_manager(mgr);
 
+    webkit_web_context_set_cache_model(global_context, WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
+
     std::string extension_dir = get_self_path() + "/lib";
     webkit_web_context_set_web_extensions_directory(global_context, extension_dir.c_str());
 
@@ -78,7 +92,9 @@ int main(int argc, char** argv) {
 
     g_timeout_add(500, refresh_download_popup_timer, NULL);
     g_signal_connect(global_context, "download-started", G_CALLBACK(on_download_started), NULL);
-    g_timeout_add(1000, update_home_stats, NULL);
+    g_timeout_add(3000, update_home_stats, NULL);
+
+    g_timeout_add_seconds(15, memory_trim_timer, NULL);
     
     gtk_main();
     return 0;

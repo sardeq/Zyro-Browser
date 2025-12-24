@@ -56,11 +56,12 @@ void init_blocker() {
 
 void apply_blocker_to_view(WebKitWebView* view) {
     WebKitUserContentManager* ucm = webkit_web_view_get_user_content_manager(view);
+    
     webkit_user_content_manager_remove_all_filters(ucm);
     
     if (global_blocker_enabled && global_filter) {
         webkit_user_content_manager_add_filter(ucm, global_filter);
-        session_blocked_count++; // Simplified counting
+        session_blocked_count++; 
     }
 }
 
@@ -86,9 +87,6 @@ void toggle_blocker() {
         
         if (view) {
             apply_blocker_to_view(view);
-            // Refreshing the page is often good practice when toggling adblock 
-            // to immediately show/hide elements, but we'll leave it to the user.
-            // webkit_web_view_reload(view); 
         }
         g_list_free(children);
     }
