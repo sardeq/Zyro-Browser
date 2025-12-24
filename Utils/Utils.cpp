@@ -80,27 +80,22 @@ std::vector<int> get_child_pids() {
 }
 #endif
 
-
+//idk man
 std::string get_total_memory_str() {
     double total_mb = 0;
+
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
         total_mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
     }
 #else
-    long total_kb = get_pid_rss_kb(getpid());
-    
-    std::vector<int> children = get_child_pids();
-    for(int pid : children) {
-        total_kb += get_pid_rss_kb(pid);
-    }
-    
-    total_mb = total_kb / 1024.0;
+    long rss_kb = get_pid_rss_kb(getpid());
+    total_mb = rss_kb / 1024.0; 
 #endif
 
     std::stringstream ss;
-    ss << std::fixed << std::setprecision(1) << total_mb << " MB";
+    ss << std::fixed << std::setprecision(1) << total_mb << " MB (Main)"; 
     return ss.str();
 }
 

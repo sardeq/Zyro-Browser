@@ -7,14 +7,20 @@
 #include <algorithm>
 #include <iostream>
 
+
+static bool history_dirty = false;
+static bool searches_dirty = false;
+
 void save_history_to_disk() {
     std::ofstream f(get_user_data_dir() + "history.txt");
     for (const auto& i : browsing_history) f << i.url << "|" << i.title << "|" << i.time_str << "\n";
 }
+
 void save_searches_to_disk() {
     std::ofstream f(get_user_data_dir() + "searches.txt");
     for (const auto& s : search_history) f << s << "\n";
 }
+
 void save_passwords_to_disk() {
     if (!global_security.ready) return;
     std::ofstream f(get_user_data_dir() + "passwords.txt");
@@ -50,21 +56,38 @@ void save_settings(const std::string& engine, const std::string& theme) {
     g_key_file_free(key_file);
 }
 
+gboolean auto_save_data(gpointer user_data) {
+    if (history_dirty) {
+        save_history_to_disk();
+        history_dirty = false;
+        // std::cout << "Auto-saved history." << std::endl; // debugging
+    }
+    if (searches_dirty) {
+        save_searches_to_disk();
+        searches_dirty = false;
+    }
+    return TRUE;
+}
+
+
 void add_history_item(const std::string& url, const std::string& title) {
     if (url.find("file://") == 0 || url.empty()) return; 
     auto it = std::remove_if(browsing_history.begin(), browsing_history.end(), [&](const HistoryItem& i){ return i.url == url; });
     browsing_history.erase(it, browsing_history.end());
     HistoryItem item = { title.empty() ? url : title, url, get_current_time_str() };
     browsing_history.push_back(item);
-    save_history_to_disk();
+    history_dirty = true;
+    //save_history_to_disk();
 }
+
 
 void add_search_query(const std::string& query) {
     if (query.length() < 2) return;
     auto it = std::remove(search_history.begin(), search_history.end(), query);
     search_history.erase(it, search_history.end());
     search_history.push_back(query);
-    save_searches_to_disk();
+    searches_dirty = true;
+    //save_searches_to_disk();
 }
 
 void clear_all_history() {

@@ -1024,6 +1024,12 @@ GtkWidget* create_new_tab(GtkWidget* win, const std::string& url, WebKitWebConte
     WebKitSettings *wk_settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(view));
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
 
+
+    webkit_settings_set_enable_webgl(wk_settings, TRUE);
+    webkit_settings_set_enable_media_stream(wk_settings, TRUE);
+    webkit_settings_set_enable_smooth_scrolling(wk_settings, TRUE);
+    webkit_settings_set_hardware_acceleration_policy(wk_settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
+
     g_signal_connect(view, "user-message-received", G_CALLBACK(on_user_message_received), NULL);
 
     g_signal_connect(ucm, "script-message-received::zyro", G_CALLBACK(on_script_message), view);
@@ -1499,6 +1505,10 @@ void create_window(WebKitWebContext* ctx) {
     gtk_container_add(GTK_CONTAINER(win), box);
 
     g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+
+    if (!webkit_web_context_is_ephemeral(ctx)) {
+        g_timeout_add_seconds(10, auto_save_data, NULL); 
+    }
     
     gtk_widget_show_all(win);
     
